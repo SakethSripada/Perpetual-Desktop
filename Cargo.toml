@@ -1,0 +1,60 @@
+[workspace]
+resolver = "2"
+members = [
+    "src-tauri",
+    "crates/am-proto",
+    "crates/am-db",
+    "crates/am-core",
+    "crates/am-agents",
+    "crates/am-vcs",
+    "crates/am-daemon",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+authors = ["Perpetual"]
+repository = "https://github.com/SakethSripada/Perpetual-Desktop"
+
+[workspace.dependencies]
+# Internal crates
+am-proto = { path = "crates/am-proto" }
+am-db = { path = "crates/am-db" }
+am-core = { path = "crates/am-core" }
+am-agents = { path = "crates/am-agents" }
+am-vcs = { path = "crates/am-vcs" }
+am-daemon = { path = "crates/am-daemon" }
+
+# Async + runtime
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+sha2 = "0.10"
+
+# Errors + logging
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Data
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "sqlite",
+    "chrono",
+    "macros",
+    "migrate",
+] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+sysinfo = "0.39"
+
+[profile.dev]
+opt-level = 0
+debug = 1

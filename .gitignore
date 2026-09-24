@@ -1,0 +1,9 @@
+node_modules/
+.npm-cache/
+dist/
+target/
+*.tsbuildinfo
+.env*
+!.env.example
+src-tauri/gen/
+*.log
