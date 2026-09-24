@@ -1,0 +1,1564 @@
+//! Codex app-server transport for live approval ([`PermissionPolicy::Ask`]).
+//!
+//! `codex exec` is non-interactive and cannot pause for approval, so Ask-mode
+//! Codex runs are driven over `codex app-server`'s JSON-RPC stdio protocol
+//! instead. We initialize, start a thread, and start one turn; the server's v2
+//! `thread/turn/item` notifications are mapped into [`NormalizedEvent`], and its
+//! `requestApproval` server→client requests are routed to the user through the
+//! [`ApprovalResponder`], whose decision is sent back as a `ReviewDecision`.
+//!
+//! Framing is newline-delimited JSON. Requests carry an `id`; notifications do
+//! not; server→client requests carry both `id` and `method`.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+use serde_json::{json, Value};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::ChildStdin;
+use tokio::sync::{mpsc, oneshot, Mutex};
+
+use crate::process::ManagedChild;
+use crate::runtime::spawn_host_piped_stdin;
+use crate::{
+    ApprovalAsk, ApprovalDecision, ApprovalKind, ApprovalResponder, ChangeKind, NormalizedEvent,
+    PermissionPolicy, QuotaWindowKind, SessionControl, SessionHandle, SessionRef, SessionSpec,
+    SessionStatus,
+};
+
+const BIN: &str = "codex";
+const CHANNEL_CAPACITY: usize = 256;
+const TERMINATE_GRACE: Duration = Duration::from_secs(3);
+
+type PendingResponses = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
+
+/// Launch (or resume) a Codex Ask-mode run over the app-server transport.
+pub(crate) async fn launch(
+    spec: SessionSpec,
+    resume: Option<SessionRef>,
+    approver: ApprovalResponder,
+) -> Result<SessionHandle, AgentLaunchError> {
+    let envs = crate::codex::session_env(&spec);
+    let args = app_server_args(&spec);
+    let mut child = spawn_host_piped_stdin(BIN, &args, &spec.worktree, &envs)
+        .await
+        .map_err(AgentLaunchError::Spawn)?;
+    let stdin = child
+        .take_stdin()
+        .ok_or_else(|| AgentLaunchError::other("no stdin pipe"))?;
+    let stdout = child
+        .take_stdout()
+        .ok_or_else(|| AgentLaunchError::other("no stdout pipe"))?;
+    let stderr = child.take_stderr();
+
+    let (events_tx, events_rx) = mpsc::channel::<NormalizedEvent>(CHANNEL_CAPACITY);
+    let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+    let (steer_tx, steer_rx) = mpsc::unbounded_channel::<String>();
+
+    let limits = spec.runtime.limits();
+    tokio::spawn(drive(
+        child, stdin, stdout, stderr, spec, resume, approver, events_tx, cancel_rx, steer_rx,
+        limits,
+    ));
+
+    Ok(SessionHandle {
+        events: events_rx,
+        control: SessionControl::with_steer(cancel_tx, steer_tx),
+    })
+}
+
+/// Build the app-server command line without ever interpolating values through
+/// a shell. App-server loads the selected Codex profile's normal configuration
+/// (plugins, apps, skills, MCP servers, and feature flags); these overrides only
+/// narrow that configuration according to Perpetual's effective run policy.
+fn app_server_args(spec: &SessionSpec) -> Vec<String> {
+    let mut args = vec!["app-server".to_string()];
+    if let Some(policy) = spec.policy.as_ref() {
+        crate::codex::push_policy_args(&mut args, policy);
+    }
+    args
+}
+
+/// Minimal launch error so the adapter can fall back to `codex exec`.
+pub(crate) enum AgentLaunchError {
+    Spawn(crate::AgentError),
+    Other(String),
+}
+
+impl AgentLaunchError {
+    fn other(msg: impl Into<String>) -> Self {
+        Self::Other(msg.into())
+    }
+
+    pub(crate) fn into_message(self) -> String {
+        match self {
+            AgentLaunchError::Spawn(err) => err.to_string(),
+            AgentLaunchError::Other(msg) => msg,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn drive(
+    mut child: ManagedChild,
+    stdin: ChildStdin,
+    stdout: tokio::process::ChildStdout,
+    stderr: Option<tokio::process::ChildStderr>,
+    spec: SessionSpec,
+    resume: Option<SessionRef>,
+    approver: ApprovalResponder,
+    events_tx: mpsc::Sender<NormalizedEvent>,
+    mut cancel_rx: oneshot::Receiver<()>,
+    mut steer_rx: mpsc::UnboundedReceiver<String>,
+    limits: crate::runtime::RuntimeLimits,
+) {
+    // Drain stderr so the pipe never blocks the child.
+    let stderr_task = stderr.map(|se| {
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(se).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                tracing::debug!(line = %line, "codex app-server stderr");
+            }
+        })
+    });
+
+    // Single writer owns stdin; the orchestrator and approval tasks enqueue lines.
+    let (out_tx, out_rx) = mpsc::channel::<String>(64);
+    let writer_task = tokio::spawn(writer(stdin, out_rx));
+
+    let pending: PendingResponses = Arc::new(Mutex::new(HashMap::new()));
+    let next_id = Arc::new(AtomicU64::new(1));
+    let (terminal_tx, mut terminal_rx) = oneshot::channel::<SessionStatus>();
+
+    // Reader dispatches responses, notifications, and server→client requests.
+    let reader_task = tokio::spawn(reader(
+        stdout,
+        pending.clone(),
+        events_tx.clone(),
+        out_tx.clone(),
+        approver,
+        terminal_tx,
+    ));
+
+    let rpc = Rpc {
+        out_tx: out_tx.clone(),
+        pending: pending.clone(),
+        next_id: next_id.clone(),
+    };
+
+    // Keep cancellation active during initialize/thread-start/turn-start too.
+    // Previously a hung app-server handshake could ignore Stop until the RPC
+    // future completed, leaving the worktree and session slot busy.
+    let startup = run_turn(&rpc, &spec, resume.as_ref(), &events_tx);
+    tokio::pin!(startup);
+    let startup_timeout = tokio::time::sleep(limits.startup_timeout);
+    tokio::pin!(startup_timeout);
+    let final_status = tokio::select! {
+        result = &mut startup => match result {
+            Ok((thread_id, turn_id)) => {
+                // Wait for completion while allowing core to steer a graceful
+                // budget reminder or closeout into the active turn.
+                let hard = tokio::time::sleep(limits.run_timeout);
+                tokio::pin!(hard);
+                loop {
+                    tokio::select! {
+                        status = &mut terminal_rx => break status.unwrap_or(SessionStatus::Failed),
+                        Some(instruction) = steer_rx.recv() => {
+                            rpc.steer(&thread_id, &turn_id, &instruction).await;
+                        }
+                        _ = &mut cancel_rx => {
+                            rpc.notify_or_request_interrupt(&thread_id, &turn_id).await;
+                            break SessionStatus::Interrupted;
+                        }
+                        _ = &mut hard => {
+                            let _ = events_tx
+                                .send(NormalizedEvent::Error {
+                                    message: "agent run timed out".into(),
+                                    retryable: true,
+                                })
+                                .await;
+                            rpc.notify_or_request_interrupt(&thread_id, &turn_id).await;
+                            break SessionStatus::Interrupted;
+                        }
+                    }
+                }
+            }
+            Err(message) => {
+                let _ = events_tx
+                    .send(NormalizedEvent::Error {
+                        message,
+                        retryable: false,
+                    })
+                    .await;
+                SessionStatus::Failed
+            }
+        },
+        _ = &mut cancel_rx => SessionStatus::Interrupted,
+        _ = &mut startup_timeout => {
+            let _ = events_tx
+                .send(NormalizedEvent::Error {
+                    message: "codex app-server did not finish starting before the startup timeout".into(),
+                    retryable: true,
+                })
+                .await;
+            SessionStatus::Interrupted
+        },
+    };
+
+    // Codex may update account limits only after the response completes. Make
+    // this a short best-effort refresh so a simple response is not held open
+    // by an optional usage lookup.
+    let _ = tokio::time::timeout(
+        Duration::from_millis(750),
+        refresh_quota(&rpc, &events_tx, false),
+    )
+    .await;
+
+    // Tear the child down and finish the stream.
+    child.terminate_group();
+    if tokio::time::timeout(TERMINATE_GRACE, child.wait())
+        .await
+        .is_err()
+    {
+        child.kill_group();
+    }
+    let _ = events_tx
+        .send(NormalizedEvent::SessionEnded {
+            status: final_status,
+        })
+        .await;
+
+    reader_task.abort();
+    writer_task.abort();
+    if let Some(task) = stderr_task {
+        task.abort();
+    }
+}
+
+async fn refresh_quota(
+    rpc: &Rpc,
+    events_tx: &mpsc::Sender<NormalizedEvent>,
+    required: bool,
+) -> Result<(), String> {
+    let quota = match rpc.request("account/rateLimits/read", json!({})).await {
+        Ok(quota) => quota,
+        Err(err) if required => {
+            return Err(format!("Codex did not provide a 7-day usage window: {err}"));
+        }
+        Err(_) => return Ok(()),
+    };
+    if let Some(event) = parse_quota_window(&quota) {
+        let _ = events_tx.send(event).await;
+        return Ok(());
+    }
+    if required {
+        Err("Codex did not provide a 7-day usage window".into())
+    } else {
+        Ok(())
+    }
+}
+
+/// Run the initialize → thread/start → turn/start sequence. Returns the turn id.
+async fn run_turn(
+    rpc: &Rpc,
+    spec: &SessionSpec,
+    resume: Option<&SessionRef>,
+    events_tx: &mpsc::Sender<NormalizedEvent>,
+) -> Result<(String, String), String> {
+    rpc.request(
+        "initialize",
+        json!({
+            "clientInfo": { "name": "Perpetual", "version": env!("CARGO_PKG_VERSION") }
+        }),
+    )
+    .await?;
+    rpc.notify("initialized", json!({})).await;
+
+    // Reuse the prior Codex thread when resuming so its context carries over;
+    // fall back to a fresh thread if resume is unavailable.
+    let thread_value = match resume {
+        Some(prior) => {
+            match rpc
+                .request(
+                    "thread/resume",
+                    thread_resume_params(spec, &prior.agent_session_id),
+                )
+                .await
+            {
+                Ok(value) => value,
+                Err(_) => {
+                    rpc.request("thread/start", thread_start_params(spec))
+                        .await?
+                }
+            }
+        }
+        None => {
+            rpc.request("thread/start", thread_start_params(spec))
+                .await?
+        }
+    };
+
+    let thread_id = thread_value
+        .pointer("/thread/id")
+        .or_else(|| thread_value.get("threadId"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "codex app-server returned no thread id".to_string())?
+        .to_string();
+    let _ = events_tx
+        .send(NormalizedEvent::SessionStarted {
+            session_id: thread_id.clone(),
+        })
+        .await;
+
+    let requires_weekly_quota = matches!(
+        spec.policy
+            .as_ref()
+            .and_then(|policy| policy.task_budget.as_ref()),
+        Some(am_proto::TaskBudget::WeeklyPercent { .. })
+    );
+    if requires_weekly_quota {
+        // Weekly budgets must have a usable account window before their prompt
+        // is sent. Unlimited and token-targeted turns do not need this extra
+        // synchronous RPC on the critical path.
+        refresh_quota(rpc, events_tx, true).await?;
+    }
+
+    let turn = rpc
+        .request("turn/start", turn_start_params(spec, &thread_id))
+        .await?;
+    let turn_id = turn
+        .pointer("/turn/id")
+        .or_else(|| turn.get("turnId"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Ok((thread_id, turn_id))
+}
+
+/// Codex approval policy for a permission level. `Ask` prompts for every action
+/// (`untrusted`); `WorkspaceWrite`/Edit lets the sandbox handle workspace edits
+/// and only prompts when Codex needs to escalate (`on-request`).
+fn approval_policy(permission: PermissionPolicy) -> &'static str {
+    match permission {
+        PermissionPolicy::Ask => "untrusted",
+        PermissionPolicy::ReadOnly => "never",
+        _ => "on-request",
+    }
+}
+
+fn thread_start_params(spec: &SessionSpec) -> Value {
+    let mut params = json!({
+        "cwd": spec.worktree.to_string_lossy(),
+        "approvalPolicy": approval_policy(spec.permission),
+        "sandbox": if spec.permission == PermissionPolicy::ReadOnly {
+            "read-only"
+        } else {
+            "workspace-write"
+        },
+    });
+    if let Some(model) = spec
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty() && !matches!(*m, "default" | "auto"))
+    {
+        params["model"] = json!(model);
+    }
+    params
+}
+
+fn thread_resume_params(spec: &SessionSpec, thread_id: &str) -> Value {
+    let mut params = thread_start_params(spec);
+    params["threadId"] = json!(thread_id);
+    params
+}
+
+fn turn_start_params(spec: &SessionSpec, thread_id: &str) -> Value {
+    let mut params = json!({
+        "threadId": thread_id,
+        "input": [{ "type": "text", "text": spec.prompt }],
+        "approvalPolicy": approval_policy(spec.permission),
+    });
+    if let Some(effort) = spec
+        .reasoning
+        .as_deref()
+        .map(str::trim)
+        .filter(|effort| !effort.is_empty() && !matches!(*effort, "default" | "auto"))
+    {
+        // ReasoningEffort is deliberately an open string in the app-server
+        // schema. Let the installed Codex version validate newly added values.
+        params["effort"] = json!(effort.to_ascii_lowercase());
+    }
+    params
+}
+
+/// JSON-RPC request/notification sender over the shared writer.
+#[derive(Clone)]
+struct Rpc {
+    out_tx: mpsc::Sender<String>,
+    pending: PendingResponses,
+    next_id: Arc<AtomicU64>,
+}
+
+impl Rpc {
+    async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(id, tx);
+        let line = json!({ "id": id, "method": method, "params": params }).to_string();
+        if self.out_tx.send(line).await.is_err() {
+            self.pending.lock().await.remove(&id);
+            return Err("codex app-server stdin closed".into());
+        }
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => Err("codex app-server closed before responding".into()),
+        }
+    }
+
+    async fn notify(&self, method: &str, params: Value) {
+        let line = json!({ "method": method, "params": params }).to_string();
+        let _ = self.out_tx.send(line).await;
+    }
+
+    async fn notify_or_request_interrupt(&self, thread_id: &str, turn_id: &str) {
+        // Best-effort interrupt; the child is killed regardless.
+        self.notify(
+            "turn/interrupt",
+            json!({ "threadId": thread_id, "turnId": turn_id }),
+        )
+        .await;
+    }
+
+    async fn steer(&self, thread_id: &str, turn_id: &str, instruction: &str) {
+        self.notify(
+            "turn/steer",
+            json!({
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "input": [{ "type": "text", "text": instruction }]
+            }),
+        )
+        .await;
+    }
+}
+
+async fn writer(mut stdin: ChildStdin, mut out_rx: mpsc::Receiver<String>) {
+    while let Some(mut line) = out_rx.recv().await {
+        line.push('\n');
+        if stdin.write_all(line.as_bytes()).await.is_err() {
+            break;
+        }
+        let _ = stdin.flush().await;
+    }
+}
+
+async fn reader(
+    stdout: tokio::process::ChildStdout,
+    pending: PendingResponses,
+    events_tx: mpsc::Sender<NormalizedEvent>,
+    out_tx: mpsc::Sender<String>,
+    approver: ApprovalResponder,
+    terminal_tx: oneshot::Sender<SessionStatus>,
+) {
+    let mut terminal_tx = Some(terminal_tx);
+    let mut lines = BufReader::new(stdout).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            tracing::debug!(line = %trimmed, "ignoring non-json app-server line");
+            continue;
+        };
+
+        let has_id = value.get("id").is_some();
+        let method = value.get("method").and_then(Value::as_str);
+
+        match (has_id, method) {
+            // Response to one of our requests.
+            (true, None) => {
+                if let Some(id) = value.get("id").and_then(Value::as_u64) {
+                    if let Some(tx) = pending.lock().await.remove(&id) {
+                        let result = if let Some(err) = value.get("error") {
+                            Err(err
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .unwrap_or("app-server error")
+                                .to_string())
+                        } else {
+                            Ok(value.get("result").cloned().unwrap_or(Value::Null))
+                        };
+                        let _ = tx.send(result);
+                    }
+                }
+            }
+            // Server→client request (approvals, etc.).
+            (true, Some(method)) => {
+                handle_server_request(method, &value, &approver, &out_tx, &events_tx).await;
+            }
+            // Notification.
+            (false, Some(method)) => {
+                if let Some(status) = handle_notification(method, &value, &events_tx).await {
+                    if let Some(tx) = terminal_tx.take() {
+                        let _ = tx.send(status);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // Stream closed without a terminal turn notification.
+    if let Some(tx) = terminal_tx.take() {
+        let _ = tx.send(SessionStatus::Completed);
+    }
+}
+
+/// Handle a server→client request. Approval requests are routed to the user; all
+/// others are acknowledged so the server is never left waiting.
+async fn handle_server_request(
+    method: &str,
+    value: &Value,
+    approver: &ApprovalResponder,
+    out_tx: &mpsc::Sender<String>,
+    events_tx: &mpsc::Sender<NormalizedEvent>,
+) {
+    let id = value.get("id").cloned().unwrap_or(Value::Null);
+    let params = value.get("params").cloned().unwrap_or(Value::Null);
+
+    if method == "item/tool/requestUserInput" {
+        if let Some(choices) = approval_question_choices(&params) {
+            // Apps use requestUserInput for consequential MCP calls. Route the
+            // provider's Accept/Decline choices through Perpetual's existing
+            // live approval UI so the original tool call remains pending and
+            // the user's decision is returned to that exact request.
+            let approver = approver.clone();
+            let out_tx = out_tx.clone();
+            tokio::spawn(async move {
+                let decision = approver
+                    .ask(ApprovalAsk {
+                        kind: ApprovalKind::Tool,
+                        tool_name: "app_connector".to_string(),
+                        command: None,
+                        cwd: None,
+                        input: params,
+                        reason: Some("An app or connector wants to perform an action".into()),
+                    })
+                    .await;
+                let answers = choices
+                    .into_iter()
+                    .map(|choice| {
+                        let answer = if decision.is_allow() {
+                            choice.allow
+                        } else {
+                            choice.deny
+                        };
+                        (choice.id, json!({ "answers": [answer] }))
+                    })
+                    .collect::<serde_json::Map<String, Value>>();
+                let reply = json!({ "id": id, "result": { "answers": answers } });
+                let _ = out_tx.send(reply.to_string()).await;
+            });
+            return;
+        }
+        // The app-server keeps the turn blocked until its client responds. Our
+        // conversation transport resumes provider sessions one turn at a time,
+        // so surface the structured question immediately, acknowledge this
+        // request, and let the user's card response become the next resumed
+        // turn. This also keeps options intact for the native webview UI.
+        let _ = events_tx
+            .send(NormalizedEvent::ToolUse {
+                name: "request_user_input".to_string(),
+                input: params.clone(),
+            })
+            .await;
+        let reply = json!({ "id": id, "result": { "answers": {} } });
+        let _ = out_tx.send(reply.to_string()).await;
+    } else if method == "mcpServer/elicitation/request" {
+        // Form and URL elicitations can request arbitrary data or navigation.
+        // The current workbench does not yet have a correlated form response
+        // channel, so surface the request and cancel it explicitly. An empty
+        // success object is not valid for this protocol and can leave remote
+        // MCP servers in an ambiguous state.
+        let _ = events_tx
+            .send(NormalizedEvent::ToolUse {
+                name: "mcp_elicitation".to_string(),
+                input: params,
+            })
+            .await;
+        let reply = json!({ "id": id, "result": { "action": "cancel" } });
+        let _ = out_tx.send(reply.to_string()).await;
+    } else if let Some(ask) = approval_ask_for(method, &params) {
+        let approver = approver.clone();
+        let out_tx = out_tx.clone();
+        let method = method.to_string();
+        tokio::spawn(async move {
+            let decision = approver.ask(ask).await;
+            let reply = json!({
+                "id": id,
+                "result": approval_response(&method, decision, &params)
+            });
+            let _ = out_tx.send(reply.to_string()).await;
+        });
+    } else {
+        // Fail closed. Returning `{}` used to look like success even for
+        // security-sensitive requests such as token refreshes or attestations.
+        // A JSON-RPC error lets Codex stop or fall back without pretending that
+        // Perpetual performed an operation it does not implement.
+        let reply = json!({
+            "id": id,
+            "error": {
+                "code": -32601,
+                "message": format!("Perpetual does not support app-server request method {method}")
+            }
+        });
+        let _ = out_tx.send(reply.to_string()).await;
+    }
+}
+
+struct ApprovalQuestionChoice {
+    id: String,
+    allow: String,
+    deny: String,
+}
+
+/// Recognize the constrained Accept/Decline questions Codex uses to approve
+/// app tool calls. General-purpose user questions intentionally do not match.
+fn approval_question_choices(params: &Value) -> Option<Vec<ApprovalQuestionChoice>> {
+    let questions = params.get("questions")?.as_array()?;
+    if questions.is_empty() {
+        return None;
+    }
+    questions
+        .iter()
+        .map(|question| {
+            let id = question.get("id")?.as_str()?.to_string();
+            let options = question.get("options")?.as_array()?;
+            let find = |labels: &[&str]| {
+                options.iter().find_map(|option| {
+                    let label = option.get("label")?.as_str()?;
+                    labels
+                        .iter()
+                        .any(|candidate| label.eq_ignore_ascii_case(candidate))
+                        .then(|| label.to_string())
+                })
+            };
+            Some(ApprovalQuestionChoice {
+                id,
+                allow: find(&["accept", "allow", "approve", "yes"])?,
+                deny: find(&["decline", "deny", "reject", "no", "cancel"])?,
+            })
+        })
+        .collect()
+}
+
+/// Build an [`ApprovalAsk`] from a Codex approval request, or `None` if the
+/// method is not an approval request.
+fn approval_ask_for(method: &str, params: &Value) -> Option<ApprovalAsk> {
+    match method {
+        "item/commandExecution/requestApproval" | "execCommandApproval" => {
+            let command = match params.get("command") {
+                Some(Value::String(command)) if !command.trim().is_empty() => {
+                    Some(vec![command.clone()])
+                }
+                Some(Value::Array(array)) => {
+                    let command = array
+                        .iter()
+                        .filter_map(|part| part.as_str().map(ToString::to_string))
+                        .collect::<Vec<_>>();
+                    (!command.is_empty()).then_some(command)
+                }
+                _ => None,
+            };
+            Some(ApprovalAsk {
+                kind: ApprovalKind::Command,
+                tool_name: "command".to_string(),
+                command,
+                cwd: params
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                input: params.clone(),
+                reason: params
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+            })
+        }
+        "item/permissions/requestApproval" => Some(ApprovalAsk {
+            kind: ApprovalKind::Tool,
+            tool_name: "permissions".to_string(),
+            command: None,
+            cwd: params
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            input: params.clone(),
+            reason: params
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+        }),
+        "item/fileChange/requestApproval" | "applyPatchApproval" => Some(ApprovalAsk {
+            kind: ApprovalKind::FileChange,
+            tool_name: "apply_patch".to_string(),
+            command: None,
+            cwd: params
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            input: params.clone(),
+            reason: params
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+        }),
+        _ => None,
+    }
+}
+
+/// Codex has two approval wire formats in the wild. The current v2
+/// `item/*/requestApproval` methods use `accept`/`decline`; legacy
+/// `execCommandApproval`/`applyPatchApproval` methods use the older
+/// `approved`/`denied` values. Keep that distinction at the adapter boundary
+/// so an Allow decision never becomes a provider denial.
+fn approval_response(method: &str, decision: ApprovalDecision, params: &Value) -> Value {
+    if method == "item/permissions/requestApproval" {
+        let permissions = if decision.is_allow() {
+            params
+                .get("permissions")
+                .cloned()
+                .unwrap_or_else(|| json!({}))
+        } else {
+            json!({})
+        };
+        return json!({
+            "permissions": permissions,
+            "scope": if decision == ApprovalDecision::AllowForSession { "session" } else { "turn" },
+        });
+    }
+
+    let decision = if method.starts_with("item/") {
+        match decision {
+            ApprovalDecision::Allow => "accept",
+            ApprovalDecision::AllowForSession => "acceptForSession",
+            ApprovalDecision::Deny => "decline",
+            ApprovalDecision::Abort => "cancel",
+        }
+    } else {
+        review_decision(decision)
+    };
+    json!({ "decision": decision })
+}
+
+/// Map our decision onto Codex's `ReviewDecision`.
+fn review_decision(decision: ApprovalDecision) -> &'static str {
+    match decision {
+        ApprovalDecision::Allow => "approved",
+        ApprovalDecision::AllowForSession => "approved_for_session",
+        ApprovalDecision::Deny => "denied",
+        ApprovalDecision::Abort => "abort",
+    }
+}
+
+/// Map a v2 notification into normalized events. Returns a terminal status when
+/// the turn ends.
+async fn handle_notification(
+    method: &str,
+    value: &Value,
+    events_tx: &mpsc::Sender<NormalizedEvent>,
+) -> Option<SessionStatus> {
+    let params = value.get("params").unwrap_or(value);
+    match method {
+        "turn/completed" => {
+            if let Some(usage) = parse_usage(params.pointer("/turn/usage")) {
+                let _ = events_tx.send(usage).await;
+            }
+            if let Some(quota) = parse_quota_window(params) {
+                let _ = events_tx.send(quota).await;
+            }
+            let status = params
+                .pointer("/turn/status")
+                .and_then(Value::as_str)
+                .map(turn_status)
+                .unwrap_or(SessionStatus::Completed);
+            if status == SessionStatus::Failed {
+                if let Some(message) = params
+                    .pointer("/turn/error/message")
+                    .and_then(Value::as_str)
+                {
+                    send_error_or_limit(events_tx, message).await;
+                }
+            }
+            Some(status)
+        }
+        "turn/failed" => {
+            if let Some(message) = params.pointer("/error/message").and_then(Value::as_str) {
+                send_error_or_limit(events_tx, message).await;
+            }
+            Some(SessionStatus::Failed)
+        }
+        "error" => {
+            if let Some(message) = params.get("message").and_then(Value::as_str) {
+                send_error_or_limit(events_tx, message).await;
+            }
+            None
+        }
+        "item/started" | "item/completed" => {
+            let completed = method == "item/completed";
+            if let Some(item) = params.get("item") {
+                for event in map_item(item, completed) {
+                    let _ = events_tx.send(event).await;
+                }
+            }
+            None
+        }
+        "item/agentMessage/delta" => {
+            if let Some(delta) = params.get("delta").and_then(Value::as_str) {
+                if !delta.is_empty() {
+                    let _ = events_tx
+                        .send(NormalizedEvent::AssistantTextDelta {
+                            delta: delta.to_string(),
+                        })
+                        .await;
+                }
+            }
+            None
+        }
+        "account/rateLimits/updated" | "account/rateLimits/read" => {
+            if let Some(quota) = parse_quota_window(params) {
+                let _ = events_tx.send(quota).await;
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Send an error event, upgrading recognized usage-limit / network messages to
+/// their dedicated events (matching the `codex exec` path) so the orchestrator's
+/// limit/network handling fires for app-server runs too.
+async fn send_error_or_limit(events_tx: &mpsc::Sender<NormalizedEvent>, message: &str) {
+    let mut events = Vec::new();
+    crate::codex::push_error_or_limit(&mut events, message);
+    for event in events {
+        let _ = events_tx.send(event).await;
+    }
+}
+
+fn turn_status(status: &str) -> SessionStatus {
+    match status {
+        "completed" => SessionStatus::Completed,
+        "interrupted" => SessionStatus::Interrupted,
+        "failed" => SessionStatus::Failed,
+        _ => SessionStatus::Completed,
+    }
+}
+
+/// Map a v2 `ThreadItem` into normalized events.
+fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
+    let mut out = Vec::new();
+    match item.get("type").and_then(Value::as_str) {
+        Some("agentMessage") if completed => {
+            if let Some(text) = item.get("text").and_then(Value::as_str) {
+                if !text.trim().is_empty() {
+                    out.push(NormalizedEvent::AssistantText {
+                        text: text.to_string(),
+                    });
+                }
+            }
+        }
+        Some("commandExecution") => {
+            let command = item
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if completed {
+                let status = item.get("status").and_then(Value::as_str).unwrap_or("");
+                let exit = item.get("exitCode").and_then(Value::as_i64);
+                let output = item
+                    .get("aggregatedOutput")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let summary = if !output.trim().is_empty() {
+                    truncate(output, 800)
+                } else if let Some(code) = exit {
+                    format!("exit code {code}")
+                } else {
+                    status.to_string()
+                };
+                out.push(NormalizedEvent::ToolResult {
+                    ok: status == "completed" && exit.unwrap_or(0) == 0,
+                    summary,
+                });
+            } else {
+                out.push(NormalizedEvent::ToolUse {
+                    name: "Command".to_string(),
+                    input: json!({ "command": command }),
+                });
+            }
+        }
+        Some("fileChange") if completed => {
+            if let Some(changes) = item.get("changes").and_then(Value::as_array) {
+                for change in changes {
+                    let Some(path) = change.get("path").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let kind = match change.get("kind").and_then(Value::as_str) {
+                        Some("add") => ChangeKind::Created,
+                        Some("delete") => ChangeKind::Deleted,
+                        _ => ChangeKind::Modified,
+                    };
+                    out.push(NormalizedEvent::FileChanged {
+                        path: path.into(),
+                        change: kind,
+                    });
+                }
+                out.push(NormalizedEvent::ToolResult {
+                    ok: item.get("status").and_then(Value::as_str) == Some("completed"),
+                    summary: format!(
+                        "{} file change{}",
+                        changes.len(),
+                        if changes.len() == 1 { "" } else { "s" }
+                    ),
+                });
+            }
+        }
+        Some("mcpToolCall") => {
+            let tool = item.get("tool").and_then(Value::as_str).unwrap_or("tool");
+            let server = item.get("server").and_then(Value::as_str).unwrap_or("");
+            let name = if server.is_empty() {
+                tool.to_string()
+            } else {
+                format!("{server}/{tool}")
+            };
+            if completed {
+                let ok = item.get("status").and_then(Value::as_str) == Some("completed")
+                    && item.get("error").is_none();
+                out.push(NormalizedEvent::ToolResult {
+                    ok,
+                    summary: item
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .or_else(|| item.get("result").map(summarize_value))
+                        .unwrap_or_else(|| name.clone()),
+                });
+            } else {
+                out.push(NormalizedEvent::ToolUse {
+                    name,
+                    input: item.get("arguments").cloned().unwrap_or(Value::Null),
+                });
+            }
+        }
+        Some("dynamicToolCall") => {
+            let tool = item.get("tool").and_then(Value::as_str).unwrap_or("tool");
+            let namespace = item.get("namespace").and_then(Value::as_str).unwrap_or("");
+            let name = if namespace.is_empty() {
+                tool.to_string()
+            } else {
+                format!("{namespace}/{tool}")
+            };
+            if completed {
+                let status = item.get("status").and_then(Value::as_str).unwrap_or("");
+                out.push(NormalizedEvent::ToolResult {
+                    ok: item
+                        .get("success")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(status == "completed"),
+                    summary: item
+                        .get("contentItems")
+                        .map(summarize_value)
+                        .unwrap_or(name),
+                });
+            } else {
+                out.push(NormalizedEvent::ToolUse {
+                    name,
+                    input: item.get("arguments").cloned().unwrap_or(Value::Null),
+                });
+            }
+        }
+        Some("webSearch") => {
+            let query = item.get("query").and_then(Value::as_str).unwrap_or("");
+            if completed {
+                out.push(NormalizedEvent::ToolResult {
+                    ok: true,
+                    summary: if query.is_empty() {
+                        "Web search completed".into()
+                    } else {
+                        format!("Web search completed: {}", truncate(query, 300))
+                    },
+                });
+            } else {
+                out.push(NormalizedEvent::ToolUse {
+                    name: "Web search".into(),
+                    input: json!({
+                        "query": query,
+                        "action": item.get("action").cloned().unwrap_or(Value::Null)
+                    }),
+                });
+            }
+        }
+        Some("imageView") if !completed => {
+            out.push(NormalizedEvent::ToolUse {
+                name: "View image".into(),
+                input: json!({ "path": item.get("path").cloned().unwrap_or(Value::Null) }),
+            });
+        }
+        Some("imageGeneration") => {
+            if completed {
+                let status = item.get("status").and_then(Value::as_str).unwrap_or("");
+                let summary = item
+                    .get("savedPath")
+                    .map(summarize_value)
+                    .filter(|value| !value.is_empty() && value != "null")
+                    .or_else(|| {
+                        item.get("result")
+                            .and_then(Value::as_str)
+                            .map(|value| truncate(value, 800))
+                    })
+                    .unwrap_or_else(|| "Image generation completed".into());
+                out.push(NormalizedEvent::ToolResult {
+                    ok: matches!(status, "completed" | "succeeded" | "success"),
+                    summary,
+                });
+            } else {
+                out.push(NormalizedEvent::ToolUse {
+                    name: "Image generation".into(),
+                    input: json!({
+                        "revisedPrompt": item.get("revisedPrompt").cloned().unwrap_or(Value::Null),
+                        "transparentBackground": item.get("transparentBackground").cloned().unwrap_or(Value::Null)
+                    }),
+                });
+            }
+        }
+        Some("collabAgentToolCall") => {
+            let tool = item
+                .get("tool")
+                .and_then(Value::as_str)
+                .unwrap_or("collaboration");
+            if completed {
+                let status = item.get("status").and_then(Value::as_str).unwrap_or("");
+                out.push(NormalizedEvent::ToolResult {
+                    ok: matches!(status, "completed" | "succeeded" | "success"),
+                    summary: format!("Collaboration {tool}: {status}"),
+                });
+            } else {
+                out.push(NormalizedEvent::ToolUse {
+                    name: format!("Collaboration/{tool}"),
+                    input: json!({
+                        "prompt": item.get("prompt").cloned().unwrap_or(Value::Null),
+                        "model": item.get("model").cloned().unwrap_or(Value::Null),
+                        "receiverThreadIds": item.get("receiverThreadIds").cloned().unwrap_or(Value::Null)
+                    }),
+                });
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+fn summarize_value(value: &Value) -> String {
+    let text = match value {
+        Value::String(value) => value.clone(),
+        other => other.to_string(),
+    };
+    truncate(&text, 800)
+}
+
+fn parse_usage(usage: Option<&Value>) -> Option<NormalizedEvent> {
+    let usage = usage?;
+    let input = usage
+        .get("input_tokens")
+        .or_else(|| usage.get("inputTokens"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(0) as u64;
+    let cached_input = usage
+        .get("cached_input_tokens")
+        .or_else(|| usage.get("cachedInputTokens"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(0) as u64;
+    let output = usage
+        .get("output_tokens")
+        .or_else(|| usage.get("outputTokens"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(0) as u64;
+    (input + cached_input + output > 0).then_some(NormalizedEvent::TokenUsage {
+        input: input.saturating_add(cached_input),
+        output,
+    })
+}
+
+fn parse_quota_window(value: &Value) -> Option<NormalizedEvent> {
+    fn find_weekly(value: &Value) -> Option<&Value> {
+        match value {
+            Value::Object(map) => {
+                let window = map
+                    .get("window")
+                    .or_else(|| map.get("duration"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let duration_minutes = map
+                    .get("window_duration_mins")
+                    .or_else(|| map.get("windowDurationMins"))
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                if let Some(bucket) = map.get("7d").or_else(|| map.get("weekly")) {
+                    return Some(bucket);
+                }
+                if window.contains("7d") || window.contains("week") || duration_minutes >= 10_000.0
+                {
+                    return Some(value);
+                }
+                map.values().find_map(find_weekly)
+            }
+            Value::Array(items) => items.iter().find_map(find_weekly),
+            _ => None,
+        }
+    }
+    fn number(map: &serde_json::Map<String, Value>, names: &[&str]) -> Option<f64> {
+        names.iter().find_map(|name| {
+            map.get(*name).and_then(|value| {
+                value
+                    .as_f64()
+                    .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+            })
+        })
+    }
+    let candidate = find_weekly(value)?;
+    let map = candidate.as_object()?;
+    let used = number(
+        map,
+        &["used_percent", "usedPercent", "percent_used", "percentUsed"],
+    )
+    .or_else(|| number(map, &["remaining_percent", "remainingPercent"]).map(|v| 100.0 - v))?;
+    Some(NormalizedEvent::QuotaWindow {
+        window: QuotaWindowKind::Weekly,
+        used_percent: used.clamp(0.0, 100.0),
+        reset_at: map
+            .get("reset_at")
+            .or_else(|| map.get("resetAt"))
+            .or_else(|| map.get("resets_at"))
+            .or_else(|| map.get("resetsAt"))
+            .and_then(parse_reset_at),
+    })
+}
+
+fn parse_reset_at(value: &Value) -> Option<DateTime<Utc>> {
+    if let Some(text) = value.as_str() {
+        return DateTime::parse_from_rfc3339(text)
+            .ok()
+            .map(|value| value.with_timezone(&Utc));
+    }
+    let seconds = value.as_f64()?;
+    let seconds = if seconds > 10_000_000_000.0 {
+        seconds / 1_000.0
+    } else {
+        seconds
+    };
+    DateTime::from_timestamp(seconds as i64, 0)
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approval_policy_per_permission() {
+        assert_eq!(approval_policy(PermissionPolicy::Ask), "untrusted");
+        assert_eq!(approval_policy(PermissionPolicy::ReadOnly), "never");
+        assert_eq!(
+            approval_policy(PermissionPolicy::WorkspaceWrite),
+            "on-request"
+        );
+    }
+
+    #[test]
+    fn thread_start_uses_untrusted_for_ask() {
+        let spec = SessionSpec {
+            worktree: "/tmp/wt".into(),
+            prompt: "go".into(),
+            model: None,
+            reasoning: None,
+            local_model: None,
+            permission: PermissionPolicy::Ask,
+            runtime: crate::SessionRuntime::default(),
+            policy: None,
+            approver: None,
+        };
+        assert_eq!(thread_start_params(&spec)["approvalPolicy"], "untrusted");
+        let edit = SessionSpec {
+            permission: PermissionPolicy::WorkspaceWrite,
+            ..spec
+        };
+        assert_eq!(thread_start_params(&edit)["approvalPolicy"], "on-request");
+    }
+
+    #[test]
+    fn app_server_applies_effective_mcp_policy() {
+        let spec = SessionSpec {
+            worktree: "/tmp/wt".into(),
+            prompt: "go".into(),
+            model: None,
+            reasoning: None,
+            local_model: None,
+            permission: PermissionPolicy::WorkspaceWrite,
+            runtime: crate::SessionRuntime::default(),
+            policy: Some(crate::AgentPolicyRuntime {
+                denied_mcp_servers: vec!["untrusted".into()],
+                allowed_tools: vec!["mcp__github__search".into()],
+                ..Default::default()
+            }),
+            approver: None,
+        };
+        let args = app_server_args(&spec);
+        assert_eq!(args[0], "app-server");
+        assert!(args
+            .iter()
+            .any(|arg| arg == "mcp_servers.untrusted.enabled=false"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == "mcp_servers.github.enabled_tools=[\"search\"]"));
+    }
+
+    #[test]
+    fn resume_and_turn_keep_current_overrides() {
+        let spec = SessionSpec {
+            worktree: "/tmp/wt".into(),
+            prompt: "continue".into(),
+            model: Some("gpt-test".into()),
+            reasoning: Some("Ultra".into()),
+            local_model: None,
+            permission: PermissionPolicy::ReadOnly,
+            runtime: crate::SessionRuntime::default(),
+            policy: None,
+            approver: None,
+        };
+        let resume = thread_resume_params(&spec, "thr_1");
+        assert_eq!(resume["threadId"], "thr_1");
+        assert_eq!(resume["model"], "gpt-test");
+        assert_eq!(resume["sandbox"], "read-only");
+        let turn = turn_start_params(&spec, "thr_1");
+        assert_eq!(turn["effort"], "ultra");
+        assert_eq!(turn["input"][0]["text"], "continue");
+    }
+
+    #[test]
+    fn maps_decisions_to_review_decision() {
+        assert_eq!(review_decision(ApprovalDecision::Allow), "approved");
+        assert_eq!(
+            review_decision(ApprovalDecision::AllowForSession),
+            "approved_for_session"
+        );
+        assert_eq!(review_decision(ApprovalDecision::Deny), "denied");
+        assert_eq!(review_decision(ApprovalDecision::Abort), "abort");
+    }
+
+    #[test]
+    fn builds_command_approval_ask() {
+        let params = json!({
+            "callId": "c1",
+            "command": ["bash", "-lc", "rm -rf build"],
+            "cwd": "/work",
+            "reason": "destructive"
+        });
+        let ask = approval_ask_for("item/commandExecution/requestApproval", &params).unwrap();
+        assert!(matches!(ask.kind, ApprovalKind::Command));
+        assert_eq!(ask.command.as_deref().unwrap().len(), 3);
+        assert_eq!(ask.cwd.as_deref(), Some("/work"));
+        assert_eq!(ask.reason.as_deref(), Some("destructive"));
+    }
+
+    #[test]
+    fn current_command_schema_keeps_string_command_for_ui() {
+        let ask = approval_ask_for(
+            "item/commandExecution/requestApproval",
+            &json!({ "command": "python3 -c 'print(1)'", "cwd": "/work" }),
+        )
+        .unwrap();
+        assert_eq!(ask.command, Some(vec!["python3 -c 'print(1)'".to_string()]));
+    }
+
+    #[test]
+    fn current_v2_approval_decisions_use_current_wire_values() {
+        let params = json!({ "permissions": { "network": { "enabled": true } } });
+        assert_eq!(
+            approval_response(
+                "item/commandExecution/requestApproval",
+                ApprovalDecision::Allow,
+                &params
+            ),
+            json!({ "decision": "accept" })
+        );
+        assert_eq!(
+            approval_response(
+                "item/fileChange/requestApproval",
+                ApprovalDecision::Deny,
+                &params
+            ),
+            json!({ "decision": "decline" })
+        );
+        assert_eq!(
+            approval_response("execCommandApproval", ApprovalDecision::Allow, &params),
+            json!({ "decision": "approved" })
+        );
+        assert_eq!(
+            approval_response(
+                "item/permissions/requestApproval",
+                ApprovalDecision::Allow,
+                &params
+            ),
+            json!({
+                "permissions": { "network": { "enabled": true } },
+                "scope": "turn"
+            })
+        );
+    }
+
+    #[test]
+    fn non_approval_request_is_ignored() {
+        assert!(approval_ask_for("item/tool/call", &json!({})).is_none());
+    }
+
+    #[tokio::test]
+    async fn user_input_request_is_surfaced_with_options() {
+        let (out_tx, mut out_rx) = mpsc::channel(2);
+        let (events_tx, mut events_rx) = mpsc::channel(2);
+        let approver = ApprovalResponder::new(|_| Box::pin(async { ApprovalDecision::Deny }));
+        handle_server_request(
+            "item/tool/requestUserInput",
+            &json!({
+                "id": 7,
+                "params": {
+                    "questions": [{
+                        "id": "scope",
+                        "header": "Scope",
+                        "question": "Which scope?",
+                        "options": [{ "label": "Focused", "description": "Small" }]
+                    }]
+                }
+            }),
+            &approver,
+            &out_tx,
+            &events_tx,
+        )
+        .await;
+
+        assert!(matches!(
+            events_rx.recv().await,
+            Some(NormalizedEvent::ToolUse { name, input })
+                if name == "request_user_input" && input["questions"][0]["id"] == "scope"
+        ));
+        let response: Value = serde_json::from_str(&out_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(response, json!({ "id": 7, "result": { "answers": {} } }));
+    }
+
+    #[tokio::test]
+    async fn connector_approval_answers_the_pending_request() {
+        let (out_tx, mut out_rx) = mpsc::channel(2);
+        let (events_tx, mut events_rx) = mpsc::channel(2);
+        let approver = ApprovalResponder::new(|ask| {
+            assert_eq!(ask.tool_name, "app_connector");
+            Box::pin(async { ApprovalDecision::Allow })
+        });
+        handle_server_request(
+            "item/tool/requestUserInput",
+            &json!({
+                "id": 8,
+                "params": {
+                    "questions": [{
+                        "id": "approval",
+                        "header": "Approve",
+                        "question": "Let Dropbox upload this file?",
+                        "options": [
+                            { "label": "Accept", "description": "Upload" },
+                            { "label": "Decline", "description": "Do not upload" },
+                            { "label": "Cancel", "description": "Stop" }
+                        ]
+                    }]
+                }
+            }),
+            &approver,
+            &out_tx,
+            &events_tx,
+        )
+        .await;
+
+        let response: Value = serde_json::from_str(&out_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(
+            response,
+            json!({ "id": 8, "result": { "answers": {
+                "approval": { "answers": ["Accept"] }
+            } } })
+        );
+        assert!(events_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn mcp_elicitation_is_surfaced_and_safely_cancelled() {
+        let (out_tx, mut out_rx) = mpsc::channel(2);
+        let (events_tx, mut events_rx) = mpsc::channel(2);
+        let approver = ApprovalResponder::new(|_| Box::pin(async { ApprovalDecision::Deny }));
+        handle_server_request(
+            "mcpServer/elicitation/request",
+            &json!({ "id": 9, "params": { "serverName": "crm", "mode": "url", "url": "https://example.test" } }),
+            &approver,
+            &out_tx,
+            &events_tx,
+        )
+        .await;
+        assert!(matches!(
+            events_rx.recv().await,
+            Some(NormalizedEvent::ToolUse { name, .. }) if name == "mcp_elicitation"
+        ));
+        let response: Value = serde_json::from_str(&out_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(
+            response,
+            json!({ "id": 9, "result": { "action": "cancel" } })
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_server_request_fails_closed() {
+        let (out_tx, mut out_rx) = mpsc::channel(2);
+        let (events_tx, _events_rx) = mpsc::channel(2);
+        let approver = ApprovalResponder::new(|_| Box::pin(async { ApprovalDecision::Deny }));
+        handle_server_request(
+            "account/chatgptAuthTokens/refresh",
+            &json!({ "id": 10, "params": {} }),
+            &approver,
+            &out_tx,
+            &events_tx,
+        )
+        .await;
+        let response: Value = serde_json::from_str(&out_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(response["error"]["code"], -32601);
+        assert!(response.get("result").is_none());
+    }
+
+    #[test]
+    fn maps_agent_message_item() {
+        let item = json!({ "type": "agentMessage", "id": "i1", "text": "Done." });
+        let events = map_item(&item, true);
+        assert!(matches!(&events[0], NormalizedEvent::AssistantText { text } if text == "Done."));
+    }
+
+    #[tokio::test]
+    async fn maps_agent_message_delta_notification() {
+        let (tx, mut rx) = mpsc::channel(2);
+        let status = handle_notification(
+            "item/agentMessage/delta",
+            &json!({
+                "params": {
+                    "threadId": "t1",
+                    "turnId": "turn1",
+                    "itemId": "i1",
+                    "delta": "Smooth"
+                }
+            }),
+            &tx,
+        )
+        .await;
+        assert!(status.is_none());
+        assert!(matches!(
+            rx.recv().await,
+            Some(NormalizedEvent::AssistantTextDelta { delta }) if delta == "Smooth"
+        ));
+    }
+
+    #[test]
+    fn reads_a_weekly_quota_window_without_exposing_raw_payload() {
+        let event = parse_quota_window(&json!({
+            "primary": {
+                "window": "7d",
+                "usedPercent": 18.5,
+                "remainingPercent": 81.5,
+                "resetAt": 1785000000_i64
+            }
+        }));
+        assert!(matches!(
+            event,
+            Some(NormalizedEvent::QuotaWindow {
+                used_percent,
+                reset_at: Some(_),
+                ..
+            }) if (used_percent - 18.5).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn weekly_quota_requires_a_weekly_window() {
+        assert!(parse_quota_window(&json!({
+            "primary": { "usedPercent": 18.5 }
+        }))
+        .is_none());
+    }
+
+    #[test]
+    fn maps_command_lifecycle() {
+        let started = map_item(
+            &json!({ "type": "commandExecution", "id": "i", "command": "cargo test", "status": "inProgress" }),
+            false,
+        );
+        assert!(matches!(&started[0], NormalizedEvent::ToolUse { name, .. } if name == "Command"));
+        let done = map_item(
+            &json!({ "type": "commandExecution", "id": "i", "command": "cargo test", "aggregatedOutput": "ok\n", "exitCode": 0, "status": "completed" }),
+            true,
+        );
+        assert!(matches!(
+            &done[0],
+            NormalizedEvent::ToolResult { ok: true, .. }
+        ));
+    }
+
+    #[test]
+    fn maps_rich_tool_items() {
+        let web = map_item(
+            &json!({ "type": "webSearch", "id": "w", "query": "current docs" }),
+            false,
+        );
+        assert!(matches!(&web[0], NormalizedEvent::ToolUse { name, .. } if name == "Web search"));
+
+        let dynamic = map_item(
+            &json!({
+                "type": "dynamicToolCall", "id": "d", "namespace": "browser",
+                "tool": "navigate", "arguments": { "url": "https://example.test" },
+                "status": "inProgress"
+            }),
+            false,
+        );
+        assert!(
+            matches!(&dynamic[0], NormalizedEvent::ToolUse { name, .. } if name == "browser/navigate")
+        );
+
+        let image = map_item(
+            &json!({
+                "type": "imageGeneration", "id": "i", "status": "completed",
+                "result": "done", "savedPath": "/tmp/image.png"
+            }),
+            true,
+        );
+        assert!(
+            matches!(&image[0], NormalizedEvent::ToolResult { ok: true, summary } if summary.contains("image.png"))
+        );
+    }
+}
