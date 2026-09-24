@@ -1,0 +1,14 @@
+{
+  "identifier": "main",
+  "description": "Desktop window, native repository picker, and safe link opening",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "dialog:allow-open",
+    "opener:allow-open-url"
+  ]
+}
