@@ -1,0 +1,6 @@
+node_modules
+dist
+target
+crates
+src-tauri/gen
+public
