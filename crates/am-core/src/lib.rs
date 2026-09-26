@@ -38,6 +38,7 @@ mod availability;
 mod budget;
 mod bus;
 mod capacity;
+mod claude_models;
 mod cloud_handoff;
 mod collaboration;
 mod context_index;

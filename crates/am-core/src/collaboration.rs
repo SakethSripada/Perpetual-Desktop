@@ -1296,6 +1296,7 @@ mod tests {
             .connect_local_repo(NewLocalRepo {
                 project_id: project.id.clone(),
                 path: repo_path.to_string_lossy().to_string(),
+                initialize: false,
             })
             .await
             .unwrap();

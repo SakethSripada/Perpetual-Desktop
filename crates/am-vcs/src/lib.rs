@@ -173,6 +173,50 @@ fn ensure_origin_matches(repo: &Path, remote_url: &str) -> Result<(), VcsError> 
 }
 
 /// Validate that `path` is a local git repository and gather metadata. Read-only.
+/// Makes `path` usable as a project: runs `git init` when it isn't in a
+/// repository, and records the folder's current files as a first commit when
+/// the repository has none. Callers must only do this with the user's consent.
+/// The home folder and filesystem roots are refused, so a mistaken pick can't
+/// sweep a whole disk into a repository.
+pub fn initialize_repo(path: &str) -> Result<(), VcsError> {
+    let p = Path::new(path);
+    if !p.is_dir() {
+        return Err(VcsError::MissingPath(path.to_string()));
+    }
+    let canonical = std::fs::canonicalize(p).map_err(|e| VcsError::Io(e.to_string()))?;
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .and_then(|h| std::fs::canonicalize(h).ok());
+    if canonical.parent().is_none() || home.as_deref() == Some(canonical.as_path()) {
+        return Err(VcsError::InvalidPath(
+            "choose a project folder rather than your home folder or a drive".into(),
+        ));
+    }
+    let inside = git(p, &["rev-parse", "--is-inside-work-tree"]).is_ok_and(|v| v == "true");
+    if !inside {
+        git(p, &["-c", "init.defaultBranch=main", "init"])?;
+    }
+    if git(p, &["rev-parse", "--verify", "HEAD"]).is_ok() {
+        return Ok(());
+    }
+    git(p, &["add", "-A"])?;
+    // Commit as the user when Git knows who they are.
+    let identity: &[&str] = if git(p, &["config", "user.email"]).is_ok_and(|v| !v.is_empty()) {
+        &[]
+    } else {
+        &[
+            "-c",
+            "user.name=Perpetual",
+            "-c",
+            "user.email=perpetual@localhost",
+        ]
+    };
+    let mut args: Vec<&str> = identity.to_vec();
+    args.extend(["commit", "--allow-empty", "-m", "Initial commit"]);
+    git(p, &args)?;
+    Ok(())
+}
+
 pub fn validate_repo(path: &str) -> Result<RepoInfo, VcsError> {
     let p = Path::new(path);
     if !p.exists() {

@@ -37,10 +37,16 @@ impl AppCore {
     /// adding a second row for it.
     pub async fn connect_local_repo(&self, input: NewLocalRepo) -> Result<Repo, CoreError> {
         let path = input.path.clone();
-        let info = tokio::task::spawn_blocking(move || am_vcs::validate_repo(&path))
-            .await
-            .map_err(|e| CoreError::Other(e.to_string()))?
-            .map_err(|e| CoreError::Other(e.to_string()))?;
+        let initialize = input.initialize;
+        let info = tokio::task::spawn_blocking(move || {
+            if initialize {
+                am_vcs::initialize_repo(&path)?;
+            }
+            am_vcs::validate_repo(&path)
+        })
+        .await
+        .map_err(|e| CoreError::Other(e.to_string()))?
+        .map_err(|e| CoreError::Other(e.to_string()))?;
 
         let toplevel = info.toplevel.to_string_lossy().to_string();
         let connected =
@@ -1620,10 +1626,12 @@ fn curated_claude_models(cli_levels: Option<&[String]>) -> Vec<AgentModelOption>
     ];
     entries
         .iter()
-        .map(|(id, label, aliases, efforts)| AgentModelOption {
+        .map(|(id, label, _aliases, efforts)| AgentModelOption {
             id: id.to_string(),
             label: label.to_string(),
-            aliases: aliases.iter().map(|alias| alias.to_string()).collect(),
+            // Aliases always mean the CLI's newest model of a family, so no
+            // pinned version may claim them.
+            aliases: Vec::new(),
             family: model_family(id),
             default: false,
             available: true,
@@ -1648,6 +1656,41 @@ fn curated_claude_models(cli_levels: Option<&[String]>) -> Vec<AgentModelOption>
         .collect()
 }
 
+/// Model families Claude Code offers: those its help names as aliases, plus
+/// the long-standing opus, sonnet, and haiku.
+fn claude_families(help: &str) -> Vec<&'static str> {
+    let lower = help.to_lowercase();
+    ["fable", "opus", "sonnet", "haiku"]
+        .into_iter()
+        .filter(|family| {
+            matches!(*family, "opus" | "sonnet" | "haiku") || lower.contains(&format!("'{family}'"))
+        })
+        .collect()
+}
+
+/// Effort levels a Claude model accepts: none for Haiku, no `xhigh` before
+/// the 4.7 generation, and otherwise whatever the CLI advertises.
+fn claude_efforts(id: &str, cli_levels: Option<&[String]>) -> Vec<String> {
+    if id.contains("haiku") {
+        return Vec::new();
+    }
+    let numbers: Vec<u32> = id.split('-').filter_map(|p| p.parse().ok()).collect();
+    let base = match numbers.as_slice() {
+        [4] => CLAUDE_EFFORT_46,
+        [4, minor, ..] if *minor <= 6 => CLAUDE_EFFORT_46,
+        _ => CLAUDE_EFFORT_FULL,
+    };
+    match cli_levels {
+        Some(levels) if numbers.first().is_some_and(|major| *major >= 5) => levels.to_vec(),
+        Some(levels) => base
+            .iter()
+            .filter(|e| levels.iter().any(|l| l.eq_ignore_ascii_case(e)))
+            .map(|e| e.to_string())
+            .collect(),
+        None => base.iter().map(|e| e.to_string()).collect(),
+    }
+}
+
 fn claude_model_catalog(defaults: AgentRunDefaults) -> AgentModelCatalog {
     let binary = find_binary("claude");
     let binary_path = binary
@@ -1658,13 +1701,19 @@ fn claude_model_catalog(defaults: AgentRunDefaults) -> AgentModelCatalog {
     let mut error = None;
     let mut cli_levels: Option<Vec<String>> = None;
     let mut help_models = Vec::new();
+    let mut help_text = String::new();
 
     if let Some(binary) = binary.as_ref() {
         match command_output_timeout(binary, &["--help"], Duration::from_secs(6)) {
             Ok(help) => {
                 source = "claude_help".to_string();
                 cli_levels = parse_claude_effort_levels(&help);
-                help_models = parse_claude_help_models(&help);
+                // Family aliases are represented by the versioned entries below.
+                help_models = parse_claude_help_models(&help)
+                    .into_iter()
+                    .filter(|m| m.id.starts_with("claude-"))
+                    .collect();
+                help_text = help;
             }
             Err(err) => error = Some(err),
         }
@@ -1672,7 +1721,34 @@ fn claude_model_catalog(defaults: AgentRunDefaults) -> AgentModelCatalog {
         error = Some("claude binary was not found".to_string());
     }
 
-    let mut models = curated_claude_models(cli_levels.as_deref());
+    // The installed CLI's own lineup keeps new models visible without an app
+    // release; the curated list only covers CLIs that can't be read.
+    let families = claude_families(&help_text);
+    let discovered = binary
+        .as_ref()
+        .map(|binary| crate::claude_models::discover(binary, &families))
+        .unwrap_or_default();
+    let mut models = if discovered.is_empty() {
+        curated_claude_models(cli_levels.as_deref())
+    } else {
+        source = "claude_cli".to_string();
+        discovered
+            .into_iter()
+            .map(|model| AgentModelOption {
+                reasoning: claude_efforts(&model.id, cli_levels.as_deref()),
+                family: Some(model.family),
+                id: model.id,
+                label: model.label,
+                aliases: Vec::new(),
+                default: false,
+                available: true,
+                source: "claude_cli".to_string(),
+                default_reasoning: None,
+                local_provider: None,
+                local_base_url: None,
+            })
+            .collect()
+    };
     let mut reasoning =
         cli_levels.unwrap_or_else(|| CLAUDE_EFFORT_FULL.iter().map(|s| s.to_string()).collect());
     // Anything the CLI itself mentions (new aliases, new full ids) merges in;
@@ -2810,11 +2886,11 @@ mod model_catalog_tests {
         let models = curated_claude_models(None);
         let fable = models.iter().find(|m| m.id == "claude-fable-5-1").unwrap();
         assert_eq!(fable.label, "Claude Fable 5.1");
-        assert!(fable.aliases.iter().any(|alias| alias == "fable"));
+        // Aliases track the CLI's newest model, so no pinned entry claims one.
+        assert!(models.iter().all(|m| m.aliases.is_empty()));
         assert_eq!(fable.reasoning, ["low", "medium", "high", "xhigh", "max"]);
         let opus = models.iter().find(|m| m.id == "claude-opus-5").unwrap();
         assert_eq!(opus.label, "Claude Opus 5");
-        assert!(opus.aliases.iter().any(|alias| alias == "opus"));
         let opus46 = models.iter().find(|m| m.id == "claude-opus-4-6").unwrap();
         assert!(!opus46.reasoning.iter().any(|level| level == "xhigh"));
         let haiku = models.iter().find(|m| m.id == "claude-haiku-4-5").unwrap();
@@ -2867,15 +2943,33 @@ mod model_catalog_tests {
     }
 
     #[test]
-    fn help_aliases_fold_into_curated_versioned_entries() {
-        let mut models = curated_claude_models(None);
-        let before = models.len();
-        for option in parse_claude_help_models(
-            "Provide an alias for the latest model (e.g. 'fable', 'opus', or 'sonnet')",
-        ) {
-            push_model_option(&mut models, option);
-        }
-        assert_eq!(models.len(), before, "aliases must not create duplicates");
+    fn claude_families_follow_the_cli_help() {
+        assert_eq!(
+            claude_families(
+                "Provide an alias for the latest model (e.g. 'fable', 'opus', or 'sonnet')"
+            ),
+            ["fable", "opus", "sonnet", "haiku"]
+        );
+        assert_eq!(claude_families(""), ["opus", "sonnet", "haiku"]);
+    }
+
+    #[test]
+    fn claude_efforts_depend_on_the_model_generation() {
+        let cli: Vec<String> = ["low", "medium", "high", "xhigh", "max", "ultra"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(claude_efforts("claude-haiku-4-5", Some(&cli)).is_empty());
+        assert!(!claude_efforts("claude-sonnet-4", Some(&cli)).contains(&"xhigh".to_string()));
+        assert_eq!(
+            claude_efforts("claude-opus-4-6", Some(&cli)),
+            ["low", "medium", "high", "max"]
+        );
+        assert_eq!(claude_efforts("claude-opus-5-5", Some(&cli)), cli);
+        assert_eq!(
+            claude_efforts("claude-opus-5-5", None),
+            ["low", "medium", "high", "xhigh", "max"]
+        );
     }
 
     #[test]
@@ -2979,6 +3073,7 @@ mod repo_connection_tests {
             .connect_local_repo(NewLocalRepo {
                 project_id: project.id.clone(),
                 path: path.clone(),
+                initialize: false,
             })
             .await
             .unwrap();
@@ -2986,6 +3081,7 @@ mod repo_connection_tests {
             .connect_local_repo(NewLocalRepo {
                 project_id: project.id.clone(),
                 path,
+                initialize: false,
             })
             .await
             .unwrap();
@@ -3002,6 +3098,7 @@ mod repo_connection_tests {
             .connect_local_repo(NewLocalRepo {
                 project_id: project.id.clone(),
                 path: workspace_root(),
+                initialize: false,
             })
             .await
             .unwrap();
@@ -3018,6 +3115,7 @@ mod repo_connection_tests {
         core.connect_local_repo(NewLocalRepo {
             project_id: project.id.clone(),
             path: workspace_root(),
+            initialize: false,
         })
         .await
         .unwrap();
