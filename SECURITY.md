@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Perpetual Desktop is currently pre-release software. Security fixes are made on the latest `main` branch only.
+Security fixes are released in the latest version of Perpetual. Please update before reporting an issue.
 
 ## Reporting a vulnerability
 

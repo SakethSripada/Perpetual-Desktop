@@ -1,68 +1,71 @@
-# Perpetual Desktop
+# Perpetual
 
-A native Windows workspace for persistent Codex and Claude Code tasks. Built with Tauri 2, Rust, React, TypeScript, Tailwind 4, and Radix UI.
+A Windows desktop workspace for long-running Codex and Claude Code tasks. Perpetual keeps a task's conversation, workspace, and queued messages together, and when an account reaches its usage limit it continues on your next account.
 
-> [!IMPORTANT]
-> Perpetual Desktop is early-stage software. Back up important work and review agent-generated changes before applying them.
+## Install
 
-## Requirements
+Download the latest installer from [Releases](https://github.com/SakethSripada/Perpetual-Desktop/releases) and run it. It installs for your Windows account only and doesn't need administrator rights.
 
-- Windows 10 or later with WebView2
-- Node.js 22 or later
-- Rust 1.96.1 (installed automatically by `rust-toolchain.toml` when using rustup)
-- Visual Studio Build Tools with the Desktop development with C++ workload
-- The Codex and/or Claude Code CLI
+You also need at least one of:
 
-## Run
+- [Codex CLI](https://developers.openai.com/codex/cli)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code/setup)
+
+If the CLI is already signed in, Perpetual picks up that account automatically.
+
+### Verify your download
+
+Each release lists the SHA-256 hash of its installer in `SHA256SUMS.txt`. To check your copy:
+
+```powershell
+Get-FileHash .\Perpetual_0.1.0_x64-setup.exe -Algorithm SHA256
+```
+
+Release builds are made by GitHub Actions from this repository. You can confirm that with the [GitHub CLI](https://cli.github.com/):
+
+```sh
+gh attestation verify Perpetual_0.1.0_x64-setup.exe --repo SakethSripada/Perpetual-Desktop
+```
+
+## Accounts
+
+- **Several accounts per provider.** Each account you add signs in separately, in its own profile.
+- **Switch any time.** Pick the account to use from the sidebar, the composer, or **Accounts**. The next message uses it.
+- **Automatic switching.** When an account reaches its usage limit, the task continues on the next ready account in your switching order. If every account is limited, it resumes when the first one resets.
+
+Sign-ins stay on your computer. Setup tokens are stored in Windows Credential Manager, not in Perpetual's database.
+
+## Build from source
+
+Requirements: Windows 10 or later, Node.js 22+, Rust 1.96.1 (installed automatically by `rust-toolchain.toml` with rustup), and Visual Studio Build Tools with the **Desktop development with C++** workload.
 
 ```sh
 npm ci
-npm run desktop
+npm run desktop    # run with hot reload
+npm run bundle     # build the installer into target/release/bundle/nsis/
 ```
 
-`npm run dev` opens a UI-only browser preview; accounts and task execution require the desktop app.
+`npm run dev` opens a browser preview of the interface without the engine.
 
-## Build and check
+Checks:
 
 ```sh
 npm test
 npm run build
+cargo test -p am-core --lib
 cargo test -p perpetual-desktop --test persistence
-npm run bundle
 ```
 
-The Windows installer is written to `target/release/bundle/nsis/`.
+Set `PERPETUAL_DATA_DIR` to run the app against a separate data folder while developing.
 
-## Features
+### Layout
 
-- Persistent sessions, streaming transcripts, queued follow-ups, structured questions, and approvals.
-- Isolated Codex and Claude account profiles, ordered account rotation, rate-limit fallback, earliest-reset recovery, and switchback.
-- Provider model/reasoning profiles, task budgets, local model fallback, and Docker Sandbox settings.
-- Local and GitHub repositories, managed worktrees, diff review, and explicit application of changes.
-- Plans, activity history, slash commands, dark/light appearance, and keyboard shortcuts.
-- Cloud continuity configuration and native power lifecycle integration. Cloud runs require provider support and configuration.
+- `src/`: the interface (React, TypeScript, Tailwind, Radix UI)
+- `src-tauri/`: the native shell: window, IPC, provider sign-in, and shutdown
+- `crates/`: the engine, database, provider adapters, Git worktrees, and protocol
 
-The desktop owns a separate database under the OS application-data directory (`dev.perpetual.desktop`), preventing scheduler conflicts with the extension. Existing extension sessions and credentials are not automatically imported. Connect accounts in **Accounts**.
+## Contributing and security
 
-Provider credentials are handled locally and are not committed to the repository. Never include tokens, account data, or generated application data in bug reports.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request, and report vulnerabilities as described in [SECURITY.md](SECURITY.md). Maintainers: see [RELEASING.md](RELEASING.md).
 
-## Source
-
-`src/` contains the desktop interface. `src-tauri/` owns the native window, safe IPC, sign-in launch, and shutdown lifecycle. `crates/` contains Perpetual's existing Rust engine, database, provider adapters, VCS support, and protocol. The desktop dispatches through the same engine API used by the extension; it does not emulate account switching in the UI.
-
-The extension's disabled LAN collaboration backend is retained in `crates/`; the desktop does not yet expose LAN pairing. Interactive CLI sign-in and installer packaging currently target Windows.
-
-MIT licensed. Provider trademarks belong to their owners. See [NOTICE](NOTICE) for component and asset attribution.
-
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Report vulnerabilities according to [SECURITY.md](SECURITY.md).
-
-## Standalone executable
-
-To build a development executable without an installer:
-
-```sh
-npm run build
-cargo build -p perpetual-desktop --features custom-protocol
-```
-
-Open `target/debug/perpetual-desktop.exe`. This executable embeds the frontend and does not need a dev server.
+MIT licensed. Codex and Claude are trademarks of their respective owners. See [NOTICE](NOTICE).
