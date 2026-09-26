@@ -22,6 +22,12 @@ pub async fn request(
     am_daemon::dispatch(&engine.core, request).await
 }
 
+/// Where the engine keeps its database and account profiles.
+#[tauri::command]
+pub fn data_dir(engine: State<'_, Engine>) -> String {
+    engine.core.data_dir().to_string_lossy().into_owned()
+}
+
 #[tauri::command]
 pub async fn sign_in(
     engine: State<'_, Engine>,

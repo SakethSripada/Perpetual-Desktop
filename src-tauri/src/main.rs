@@ -14,15 +14,21 @@ fn main() {
                 let _ = window.set_focus();
             }
         }))
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             commands::request,
-            commands::sign_in
+            commands::sign_in,
+            commands::data_dir
         ])
         .setup(|app| {
             // Desktop data is isolated from the extension: two schedulers must never own one DB.
-            let dir = app.path().app_data_dir()?;
+            // PERPETUAL_DATA_DIR points a development or test run at a throwaway directory.
+            let dir = match std::env::var_os("PERPETUAL_DATA_DIR") {
+                Some(dir) if !dir.is_empty() => std::path::PathBuf::from(dir),
+                _ => app.path().app_data_dir()?,
+            };
             let core = tauri::async_runtime::block_on(AppCore::new(&dir))?;
             let mut events = core.events.subscribe();
             let handle = app.handle().clone();
