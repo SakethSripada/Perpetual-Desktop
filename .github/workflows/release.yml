@@ -1,0 +1,137 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build, for example v0.1.0
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      # Azure Trusted Signing. When these are unset the installer is built
+      # unsigned and the draft release says so.
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+      SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.1
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check the version matches the tag
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $package = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne $env:TAG -or $package -ne $version) {
+            throw "Tag $env:TAG, tauri.conf.json $version, and package.json $package must match."
+          }
+
+      - run: npm ci
+      - run: npm test
+      - run: cargo test -p am-core --lib provider_accounts --locked
+
+      - name: Configure code signing
+        id: signing
+        shell: pwsh
+        run: |
+          if (-not $env:AZURE_CLIENT_ID -or -not $env:SIGNING_ACCOUNT) {
+            Write-Host "::warning::Signing is not configured; the installer will be unsigned."
+            "signed=false" >> $env:GITHUB_OUTPUT
+            return
+          }
+          cargo install trusted-signing-cli --locked
+          $command = "trusted-signing-cli -e $env:SIGNING_ENDPOINT -a $env:SIGNING_ACCOUNT -c $env:SIGNING_PROFILE -d Perpetual %1"
+          @{ bundle = @{ windows = @{ signCommand = $command } } } | ConvertTo-Json -Depth 5 |
+            Set-Content -Encoding utf8 src-tauri/tauri.signing.json
+          "signed=true" >> $env:GITHUB_OUTPUT
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          if ("${{ steps.signing.outputs.signed }}" -eq "true") {
+            npx tauri build --ci --config src-tauri/tauri.signing.json
+          } else {
+            npx tauri build --ci
+          }
+
+      - name: Verify signatures
+        if: steps.signing.outputs.signed == 'true'
+        shell: pwsh
+        run: |
+          $files = @("target/release/perpetual-desktop.exe") + (Get-ChildItem target/release/bundle/nsis -Filter *.exe).FullName
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature $file
+            if ($signature.Status -ne 'Valid') { throw "$file is not validly signed: $($signature.StatusMessage)" }
+            Write-Host "$file signed by $($signature.SignerCertificate.Subject)"
+          }
+
+      - name: Write checksums
+        shell: pwsh
+        run: |
+          $dir = "target/release/bundle/nsis"
+          Get-ChildItem $dir -Filter *.exe | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          } | Set-Content -Encoding ascii "$dir/SHA256SUMS.txt"
+          Get-Content "$dir/SHA256SUMS.txt"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/release/bundle/nsis/*.exe
+
+      - name: Draft the GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $dir = "target/release/bundle/nsis"
+          $sums = Get-Content "$dir/SHA256SUMS.txt" -Raw
+          $signed = "${{ steps.signing.outputs.signed }}" -eq "true"
+          $notes = @(
+            "## Install",
+            "Download the installer below and run it. It installs for your Windows account only and does not need administrator rights.",
+            "",
+            "Perpetual needs the [Codex CLI](https://developers.openai.com/codex/cli) and/or [Claude Code](https://docs.anthropic.com/en/docs/claude-code/setup).",
+            "",
+            "## Verify your download",
+            "Compare the SHA-256 hash of the file you downloaded with the list below:",
+            '```powershell',
+            'Get-FileHash .\Perpetual_*_x64-setup.exe -Algorithm SHA256',
+            '```',
+            '```',
+            $sums.Trim(),
+            '```',
+            "You can also confirm it was built from this repository by GitHub Actions: ``gh attestation verify <file> --repo $env:GITHUB_REPOSITORY``."
+          )
+          if (-not $signed) {
+            $notes += @("", "> [!NOTE]", "> This build is not code-signed, so Windows SmartScreen may ask you to confirm before running it.")
+          }
+          $notes -join "`n" | Set-Content -Encoding utf8 notes.md
+          $files = (Get-ChildItem $dir -Filter *.exe).FullName + "$dir/SHA256SUMS.txt"
+          gh release create $env:TAG --draft --title "Perpetual $($env:TAG.TrimStart('v'))" --notes-file notes.md --generate-notes $files

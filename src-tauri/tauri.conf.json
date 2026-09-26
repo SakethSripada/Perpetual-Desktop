@@ -17,19 +17,37 @@
         "height": 860,
         "minWidth": 900,
         "minHeight": 640,
+        "center": true,
         "decorations": false,
-        "backgroundColor": "#181818"
+        "backgroundColor": "#1f1f1f"
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost; font-src 'self'; script-src 'self'"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; font-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'none'"
     }
   },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "publisher": "Perpetual",
+    "copyright": "Copyright © 2026 Perpetual",
+    "homepage": "https://github.com/SakethSripada/Perpetual-Desktop",
+    "license": "MIT",
+    "licenseFile": "../LICENSE",
+    "category": "DeveloperTool",
+    "shortDescription": "A persistent workspace for Codex and Claude Code",
+    "longDescription": "Perpetual keeps Codex and Claude Code tasks going across sessions and accounts, switching to your next account when one reaches its usage limit.",
     "icon": ["icons/icon.ico", "icons/icon.png"],
-    "shortDescription": "A persistent workspace for Codex and Claude",
-    "category": "DeveloperTool"
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "webviewInstallMode": { "type": "embedBootstrapper" },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "languages": ["English"],
+        "displayLanguageSelector": false,
+        "compression": "lzma"
+      }
+    }
   }
 }

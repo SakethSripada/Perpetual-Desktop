@@ -20,12 +20,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.96.1
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: npm ci
       - run: npm run format:check
       - run: npm test
       - run: npm run build
+      - run: cargo fmt --all --check
+      - run: cargo check -p perpetual-desktop --locked
       - run: cargo test -p perpetual-desktop --test persistence --locked
       - run: cargo test -p am-proto -p am-db -p am-vcs --locked
-      - run: cargo check -p perpetual-desktop --locked
-      - run: cargo test -p am-core --lib provider_accounts::tests --locked
+      - run: cargo test -p am-core --lib --locked
+      - run: cargo test -p am-daemon --test roundtrip --locked

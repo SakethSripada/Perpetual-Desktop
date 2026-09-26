@@ -58,3 +58,9 @@ sysinfo = "0.39"
 [profile.dev]
 opt-level = 0
 debug = 1
+
+# Smaller, faster shipping binaries.
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
