@@ -1,6 +1,7 @@
 {
+  "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Desktop window, native repository picker, and safe link opening",
+  "description": "The main window: its own title bar controls, the folder picker, and opening https links in the browser",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -9,6 +10,9 @@
     "core:window:allow-close",
     "core:window:allow-start-dragging",
     "dialog:allow-open",
-    "opener:allow-open-url"
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }]
+    }
   ]
 }
