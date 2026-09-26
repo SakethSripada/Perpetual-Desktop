@@ -102,10 +102,72 @@ fn launch_terminal(
         .map_err(|error| error.to_string())
 }
 
-#[cfg(not(windows))]
+/// Opens Terminal with a one-shot script. The script lives in a private
+/// temporary folder, is readable only by the user, and deletes itself as soon
+/// as it starts, because it can carry an account's environment.
+#[cfg(target_os = "macos")]
+fn launch_terminal(
+    launch: am_proto::ProviderAccountAuthLaunch,
+    tooling: bool,
+) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    // Single-quote for bash: ' becomes '\''.
+    let quote = |value: &str| format!("'{}'", value.replace('\'', r"'\''"));
+    let dir = std::env::temp_dir().join("perpetual-sign-in");
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .map_err(|error| error.to_string())?;
+    let path = dir.join(format!("{}.command", am_proto::new_id()));
+    let mut lines = vec![
+        "#!/bin/bash".to_string(),
+        r#"rm -f -- "$0""#.to_string(),
+        "clear".to_string(),
+    ];
+    for (key, value) in &launch.env {
+        if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err("Invalid environment for the sign-in terminal".into());
+        }
+        lines.push(format!("export {key}={}", quote(value)));
+    }
+    lines.push(format!(r"printf '%s\n\n' {}", quote(&launch.instructions)));
+    let command = std::iter::once(quote(&launch.binary))
+        .chain(launch.args.iter().map(|arg| quote(arg)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if tooling {
+        lines.push(format!("exec {command}"));
+    } else {
+        lines.push(command);
+        lines.push(
+            r"if [ $? -eq 0 ]; then printf '\nSigned in. You can close this window.\n'; else read -r -p $'\nSign-in did not finish. Press Return to close. '; fi"
+                .to_string(),
+        );
+    }
+    let script = lines.join("\n") + "\n";
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o700)
+        .open(&path)
+        .map_err(|error| error.to_string())?;
+    file.write_all(script.as_bytes())
+        .map_err(|error| error.to_string())?;
+    drop(file);
+    std::process::Command::new("open")
+        .args(["-a", "Terminal"])
+        .arg(&path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn launch_terminal(
     _launch: am_proto::ProviderAccountAuthLaunch,
     _tooling: bool,
 ) -> Result<(), String> {
-    Err("Interactive account sign-in currently requires Windows. Claude setup tokens can be added in Accounts.".into())
+    Err("Interactive sign-in is available on Windows and macOS. Claude setup tokens can be added in Accounts.".into())
 }

@@ -6,7 +6,71 @@ use am_core::AppCore;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 
+/// Apps opened from Finder or the Dock get a minimal PATH, which hides
+/// Homebrew and npm-installed CLIs (and the `node` they run on). Adopt the
+/// PATH of the user's login shell, bounded by a short timeout.
+#[cfg(unix)]
+fn inherit_login_shell_path() {
+    use std::io::Read;
+    use std::time::{Duration, Instant};
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let Ok(mut child) = std::process::Command::new(shell)
+        .args([
+            "-ilc",
+            r#"printf '__PERPETUAL_PATH__%s__PERPETUAL_PATH__' "$PATH""#,
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return;
+    };
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+            Err(_) => return,
+        }
+    }
+    if !matches!(child.try_wait(), Ok(Some(_))) {
+        let _ = child.kill();
+        return;
+    }
+    let mut out = String::new();
+    if child
+        .stdout
+        .take()
+        .map(|mut s| s.read_to_string(&mut out))
+        .is_none()
+    {
+        return;
+    }
+    let Some(path) = out
+        .split("__PERPETUAL_PATH__")
+        .nth(1)
+        .filter(|p| !p.is_empty())
+    else {
+        return;
+    };
+    let mut dirs: Vec<std::path::PathBuf> = std::env::split_paths(path).collect();
+    if let Some(current) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&current) {
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
+    }
+    if let Ok(joined) = std::env::join_paths(dirs) {
+        // Runs before any other thread exists.
+        std::env::set_var("PATH", joined);
+    }
+}
+
 fn main() {
+    #[cfg(unix)]
+    inherit_login_shell_path();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
