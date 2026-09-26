@@ -1,6 +1,8 @@
 @import 'tailwindcss';
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 @theme {
-  --font-sans: 'Inter', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI', 'Inter', system-ui, sans-serif;
+  --font-mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
   --color-surface: var(--surface);
   --color-sidebar: var(--sidebar);
   --color-elevated: var(--elevated);
@@ -8,63 +10,138 @@
   --color-line: var(--line);
   --color-ink: var(--ink);
   --color-muted: var(--muted);
-  --color-accent: #b2cdbd;
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --animate-fade-in: fade-in 120ms ease-out;
+  --animate-pop-in: pop-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px) scale(0.98);
+    }
+  }
 }
 :root {
   color-scheme: dark;
-  --surface: #202020;
+  --surface: #1f1f1f;
   --sidebar: #181818;
-  --elevated: #292929;
-  --hover: #303030;
-  --line: #393939;
+  --elevated: #282828;
+  --hover: #2e2e2e;
+  --line: #363636;
   --ink: #ecebe8;
-  --muted: #a3a29f;
+  --muted: #a09f9b;
+  --faint: #73726e;
+  --accent: #b2cdbd;
+  --on-accent: #13201a;
+  --success: #86c79f;
+  --warning: #e3b96f;
+  --danger: #ec8b80;
 }
 :root[data-theme='light'] {
   color-scheme: light;
   --surface: #fcfbf9;
-  --sidebar: #f1f0ed;
-  --elevated: #fff;
-  --hover: #eae9e6;
-  --line: #e2e0db;
-  --ink: #242423;
-  --muted: #77756f;
-  --color-accent: #527a63;
+  --sidebar: #f3f2ef;
+  --elevated: #ffffff;
+  --hover: #ebeae6;
+  --line: #e1dfda;
+  --ink: #1f1f1e;
+  --muted: #6c6a65;
+  --faint: #9b9993;
+  --accent: #46735a;
+  --on-accent: #ffffff;
+  --success: #2c8052;
+  --warning: #9a6410;
+  --danger: #bf3b2f;
 }
 @layer base {
   * {
     scrollbar-width: thin;
     scrollbar-color: var(--line) transparent;
   }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
   body {
     @apply m-0 bg-surface font-sans text-ink antialiased;
+    font-size: 14px;
+    overflow: hidden;
+    user-select: none;
+  }
+  /* Text people read or copy stays selectable; chrome does not. */
+  input,
+  textarea,
+  pre,
+  code,
+  .selectable,
+  .prose-chat {
+    user-select: text;
   }
   button,
   select,
-  [role='switch'] {
+  summary,
+  [role='switch'],
+  [role='menuitem'],
+  [role='menuitemradio'],
+  [role='menuitemcheckbox'] {
     @apply cursor-pointer;
+  }
+  button:disabled {
+    @apply cursor-default;
   }
   input,
   textarea {
     @apply outline-none;
   }
-  input:not([type='checkbox']),
+  input:not([type='checkbox']):not([type='radio']),
   textarea.field {
-    @apply rounded-lg border border-line bg-elevated px-3 py-2 text-sm focus:border-accent;
+    @apply h-9 rounded-lg border border-line bg-elevated px-3 text-[13px] text-ink transition-colors placeholder:text-faint focus:border-muted;
+  }
+  textarea.field {
+    @apply h-auto py-2 leading-6;
+  }
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: var(--accent);
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  input:focus-visible,
+  textarea:focus-visible {
+    outline: none;
   }
   ::selection {
-    background: #7eaa8f55;
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
   }
 }
 @utility prose-chat {
   @apply text-[14px] leading-7 break-words;
+  & > :first-child {
+    @apply mt-0;
+  }
+  & > :last-child {
+    @apply mb-0;
+  }
   & p {
     @apply my-3;
   }
   & h1,
   & h2,
-  & h3 {
-    @apply mt-6 mb-3 font-semibold text-ink;
+  & h3,
+  & h4 {
+    @apply mt-6 mb-2 font-semibold text-ink;
   }
   & h1 {
     @apply text-xl;
@@ -72,29 +149,41 @@
   & h2 {
     @apply text-lg;
   }
+  & h3 {
+    @apply text-base;
+  }
   & ul {
-    @apply list-disc pl-6;
+    @apply my-3 list-disc pl-6;
   }
   & ol {
-    @apply list-decimal pl-6;
+    @apply my-3 list-decimal pl-6;
+  }
+  & li {
+    @apply my-1;
   }
   & pre {
-    @apply my-4 overflow-x-auto rounded-xl border border-line bg-sidebar p-4 text-xs leading-6;
+    @apply my-4 overflow-x-auto rounded-xl border border-line bg-sidebar p-4 text-[12.5px] leading-6;
+  }
+  & :not(pre) > code {
+    @apply rounded-md bg-hover px-1.5 py-0.5 text-[0.88em];
   }
   & code {
-    @apply font-mono text-[.9em];
+    @apply font-mono;
   }
   & a {
     @apply text-accent underline underline-offset-4;
   }
   & blockquote {
-    @apply border-l-2 border-line pl-4 text-muted;
+    @apply my-3 border-l-2 border-line pl-4 text-muted;
   }
   & table {
-    @apply my-4 w-full border-collapse text-sm;
+    @apply my-4 block w-full overflow-x-auto border-collapse text-[13px];
   }
   & th,
   & td {
     @apply border border-line px-3 py-2 text-left;
+  }
+  & hr {
+    @apply my-6 border-line;
   }
 }

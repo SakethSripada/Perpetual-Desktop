@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { commandPrompt, parseCommand } from './commands';
 import { questionsFromEvent, formatQuestionAnswers } from './userQuestions';
 import { buildTranscriptItems } from './transcript';
-import type { AgentThreadEvent } from './types';
+import { accountDetail, accountName, accountState } from './format';
+import type { AgentThreadEvent, ProviderAccountStatus } from './types';
 const event = (patch: Partial<AgentThreadEvent>): AgentThreadEvent => ({
   id: 'e1',
   thread_id: 't1',
@@ -65,5 +66,77 @@ describe('provider continuity UI', () => {
     });
     expect(items).toHaveLength(1);
     expect(items[0].type).toBe('event');
+  });
+});
+describe('account continuity', () => {
+  const activity = (kind: string, payload: unknown) => ({
+    id: 'a1',
+    project_id: null,
+    task_id: 't1',
+    kind,
+    payload,
+    ts: '2026-09-22T00:00:01Z',
+  });
+  it('names the account a task switched to', () => {
+    const items = buildTranscriptItems({
+      thread: null,
+      events: [],
+      activities: [
+        activity('thread.account_switched', {
+          thread_id: 't1',
+          from_agent: 'codex',
+          to_agent: 'codex',
+          account_id: 'work',
+        }),
+      ],
+      queued: [],
+      cloudRuns: [],
+      accountLabel: (id) => (id === 'work' ? 'work@example.com' : null),
+    });
+    expect(items).toEqual([
+      expect.objectContaining({
+        type: 'transition',
+        text: 'Account limit reached; continuing with work@example.com',
+      }),
+    ]);
+  });
+  it('shows provider errors but hides other system envelopes', () => {
+    const items = buildTranscriptItems({
+      thread: null,
+      events: [
+        event({ id: 'e1', role: 'system', kind: 'error', text: 'Codex exited unexpectedly' }),
+        event({ id: 'e2', role: 'system', kind: 'awaiting_approval', text: 'waiting' }),
+      ],
+      activities: [],
+      queued: [],
+      cloudRuns: [],
+    });
+    expect(items.map((item) => item.type === 'event' && item.event.kind)).toEqual(['error']);
+  });
+  it('describes account state the way people read it', () => {
+    const account = (patch: Partial<ProviderAccountStatus>): ProviderAccountStatus => ({
+      id: 'a',
+      label: 'Work',
+      agent: 'codex',
+      enabled: true,
+      use_credits: false,
+      auth_mode: 'isolated_cli',
+      installed: true,
+      active: false,
+      authenticated: true,
+      availability: 'available',
+      reset_at: null,
+      detail: null,
+      ...patch,
+    });
+    expect(accountState(account({ active: true }))).toBe('active');
+    expect(accountState(account({ availability: 'limited' }))).toBe('limited');
+    expect(accountState(account({ authenticated: false }))).toBe('signed_out');
+    expect(accountState(account({ installed: false }))).toBe('missing');
+    expect(accountName(account({ email: 'me@example.com' }))).toBe('me@example.com');
+    expect(accountName(account({ auth_mode: 'system' }))).toBe('Codex sign-in');
+    expect(accountDetail(account({ auth_mode: 'system', plan: 'prolite' }))).toBe(
+      'Shared with Codex CLI · Pro Lite',
+    );
   });
 });

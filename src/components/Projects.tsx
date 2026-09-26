@@ -1,165 +1,269 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { FolderGit2, Plus, Github, Trash2, GitBranch, FolderOpen } from 'lucide-react';
+import {
+  FolderGit2,
+  Plus,
+  Github,
+  Trash2,
+  GitBranch,
+  FolderOpen,
+  MoreHorizontal,
+  Lock,
+  Search,
+  ChevronDown,
+} from 'lucide-react';
 import { useStore } from '../lib/store';
-import { action, rpc } from '../lib/api';
-import type { GithubRepository } from '../lib/types';
-import { Button, Empty, Modal, PageHeading } from './ui';
+import { action, native, rpc } from '../lib/api';
+import type { GithubRepository, Repo } from '../lib/types';
+import {
+  Button,
+  Card,
+  Confirm,
+  Empty,
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+  Modal,
+  PageHeading,
+} from './ui';
+
 export function Projects() {
   const store = useStore();
   const [github, setGithub] = useState(false);
-  const [token, setToken] = useState('');
-  const [repos, setRepos] = useState<GithubRepository[]>([]);
-  const [remove, setRemove] = useState<string | null>(null);
+  const [remove, setRemove] = useState<Repo | null>(null);
   const connect = () =>
     action(async () => {
       const path = await open({
         directory: true,
         multiple: false,
-        title: 'Choose a Git repository',
+        title: 'Choose a project folder',
       });
       if (!path) return;
       await rpc('connect_local_repo', { project_id: store.project?.id, path });
       await store.refresh();
-    }, 'Project connected');
+    });
+  const addMenu = (
+    <MenuRoot>
+      <MenuTrigger asChild>
+        <Button variant="primary" disabled={!native}>
+          <Plus size={15} />
+          Add project
+          <ChevronDown size={13} className="-mr-1 opacity-70" />
+        </Button>
+      </MenuTrigger>
+      <MenuContent align="end" className="w-56">
+        <MenuItem onSelect={() => void connect()}>
+          <FolderOpen size={14} className="text-muted" />
+          Choose a folder…
+        </MenuItem>
+        <MenuItem onSelect={() => setGithub(true)}>
+          <Github size={14} className="text-muted" />
+          Clone from GitHub…
+        </MenuItem>
+      </MenuContent>
+    </MenuRoot>
+  );
   return (
     <>
       <PageHeading
         title="Projects"
-        description="Your repositories, with a separate workspace for every task."
-        actions={
-          <Button variant="solid" onClick={() => void connect()}>
-            <Plus size={15} />
-            Add project
-          </Button>
+        description="Each task works in its own copy of a project, so nothing changes until you apply it."
+        actions={store.repos.length > 0 && addMenu}
+      />
+      {store.repos.length ? (
+        <Card className="overflow-hidden">
+          {store.repos.map((repo) => (
+            <div
+              key={repo.id}
+              className="flex items-center gap-3 border-b border-line/60 px-4 py-3 last:border-0"
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-hover text-muted">
+                {repo.kind === 'github' ? <Github size={16} /> : <FolderGit2 size={16} />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13px] font-medium">{repo.name}</div>
+                <div className="mt-0.5 truncate font-mono text-[11px] text-muted selectable">
+                  {repo.local_path || repo.remote_url}
+                </div>
+              </div>
+              <span className="hidden shrink-0 items-center gap-1.5 text-xs text-muted sm:flex">
+                <GitBranch size={12} />
+                {repo.default_branch}
+              </span>
+              <MenuRoot>
+                <MenuTrigger asChild>
+                  <button
+                    aria-label={`Options for ${repo.name}`}
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-ink data-[state=open]:bg-hover"
+                  >
+                    <MoreHorizontal size={16} />
+                  </button>
+                </MenuTrigger>
+                <MenuContent align="end">
+                  <MenuItem danger onSelect={() => setRemove(repo)}>
+                    <Trash2 size={14} />
+                    Remove from Perpetual
+                  </MenuItem>
+                </MenuContent>
+              </MenuRoot>
+            </div>
+          ))}
+        </Card>
+      ) : (
+        <Card>
+          <Empty
+            icon={<FolderGit2 size={26} strokeWidth={1.5} />}
+            title="No projects yet"
+            action={
+              <>
+                <Button variant="primary" onClick={() => void connect()} disabled={!native}>
+                  <FolderOpen size={14} />
+                  Choose a folder
+                </Button>
+                <Button variant="secondary" onClick={() => setGithub(true)} disabled={!native}>
+                  <Github size={14} />
+                  Clone from GitHub
+                </Button>
+              </>
+            }
+          >
+            Add a Git repository from this computer or from GitHub to work on it in tasks.
+          </Empty>
+        </Card>
+      )}
+      <GithubDialog open={github} onOpenChange={setGithub} />
+      <Confirm
+        open={!!remove}
+        onOpenChange={(v) => !v && setRemove(null)}
+        title={`Remove ${remove?.name ?? 'project'}?`}
+        description="The folder on your computer isn't touched. Existing tasks keep their history."
+        confirmLabel="Remove"
+        danger
+        onConfirm={() =>
+          action(async () => {
+            await rpc('delete_repo', { repo_id: remove!.id });
+            await store.refresh();
+          })
         }
       />
-      <div className="grid gap-4">
-        {store.repos.map((repo) => (
-          <div key={repo.id} className="flex items-center gap-4 rounded-xl border border-line p-5">
-            <div className="rounded-xl bg-elevated p-3">
-              <FolderGit2 size={23} strokeWidth={1.5} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <h2 className="text-sm font-medium">{repo.name}</h2>
-              <p className="mt-1.5 truncate text-xs text-muted">
-                {repo.local_path || repo.remote_url}
-              </p>
-            </div>
-            <span className="flex items-center gap-1.5 text-xs text-muted">
-              <GitBranch size={13} />
-              {repo.default_branch}
-            </span>
-            <Button aria-label={`Remove ${repo.name}`} onClick={() => setRemove(repo.id)}>
-              <Trash2 size={14} />
-            </Button>
-          </div>
-        ))}
-      </div>
-      {!store.repos.length && (
-        <div className="rounded-2xl border border-line">
-          <Empty icon={<FolderGit2 size={28} />} title="Give your next idea a home">
-            <p>
-              Connect a local repository or clone one from GitHub. Perpetual keeps agent changes
-              isolated until you review them.
-            </p>
-            <div className="mt-6 flex justify-center gap-3">
-              <Button variant="solid" onClick={() => void connect()}>
-                <FolderOpen size={15} />
-                Choose a folder
-              </Button>
-              <Button variant="outline" onClick={() => setGithub(true)}>
-                <Github size={15} />
-                From GitHub
-              </Button>
-            </div>
-          </Empty>
-        </div>
-      )}
-      {store.repos.length > 0 && (
-        <Button variant="outline" className="mt-5" onClick={() => setGithub(true)}>
-          <Github size={15} />
-          Connect GitHub repository
-        </Button>
-      )}
-      <Modal
-        open={github}
-        onOpenChange={(v) => {
-          setGithub(v);
-          if (!v) {
-            setToken('');
-            setRepos([]);
-          }
-        }}
-        title="Connect GitHub"
-        description="Enter a GitHub token with access to the repository. It is used for this connection and is not saved in browser storage."
-      >
+    </>
+  );
+}
+
+function GithubDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const store = useStore();
+  const [token, setToken] = useState('');
+  const [repos, setRepos] = useState<GithubRepository[] | null>(null);
+  const [query, setQuery] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [cloning, setCloning] = useState<string | null>(null);
+  const close = () => {
+    onOpenChange(false);
+    setToken('');
+    setRepos(null);
+    setQuery('');
+  };
+  const filtered = useMemo(
+    () =>
+      (repos ?? []).filter((r) => r.full_name.toLowerCase().includes(query.trim().toLowerCase())),
+    [repos, query],
+  );
+  const load = async () => {
+    setLoading(true);
+    const result = await action(() =>
+      rpc<GithubRepository[]>('github_list_repositories', { token }),
+    );
+    if (result) setRepos(result);
+    setLoading(false);
+  };
+  const clone = async (repo: GithubRepository) => {
+    setCloning(repo.full_name);
+    const ok = await action(async () => {
+      await rpc('connect_github_repo', {
+        token,
+        input: { ...repo, project_id: store.project?.id },
+      });
+      await store.refresh();
+      return true;
+    }, `${repo.name} added`);
+    setCloning(null);
+    if (ok) close();
+  };
+  return (
+    <Modal
+      open={open}
+      onOpenChange={(v) => (v ? onOpenChange(true) : close())}
+      title="Clone from GitHub"
+      description={
+        repos
+          ? 'Choose a repository to clone.'
+          : 'Use a personal access token with read access to your repositories. It is only used for this and is not saved.'
+      }
+      width={520}
+    >
+      {!repos ? (
         <form
+          className="flex gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            void action(async () =>
-              setRepos(await rpc<GithubRepository[]>('github_list_repositories', { token })),
-            );
+            if (token.trim()) void load();
           }}
-          className="flex gap-2"
         >
           <input
+            autoFocus
             aria-label="GitHub token"
             autoComplete="off"
             type="password"
+            spellCheck={false}
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            required
-            className="min-w-0 flex-1"
-            placeholder="GitHub personal access token"
+            className="min-w-0 flex-1 font-mono"
+            placeholder="ghp_… or github_pat_…"
           />
-          <Button type="submit" variant="solid">
-            Load repositories
+          <Button type="submit" variant="primary" loading={loading} disabled={!token.trim()}>
+            Continue
           </Button>
         </form>
-        <div className="mt-5 max-h-72 overflow-auto">
-          {repos.map((repo) => (
-            <button
-              key={repo.full_name}
-              className="flex w-full items-center gap-2 rounded-lg p-3 text-left text-sm hover:bg-hover"
-              onClick={() =>
-                void action(async () => {
-                  await rpc('connect_github_repo', {
-                    token,
-                    input: { ...repo, project_id: store.project?.id },
-                  });
-                  await store.refresh();
-                  setGithub(false);
-                  setToken('');
-                  setRepos([]);
-                }, 'Repository connected')
-              }
-            >
-              <Github size={15} />
-              {repo.full_name}
-            </button>
-          ))}
-        </div>
-      </Modal>
-      <Modal
-        open={!!remove}
-        onOpenChange={(v) => !v && setRemove(null)}
-        title="Disconnect this project?"
-        description="The repository on disk will remain. Existing tasks keep their worktree history."
-      >
-        <Button
-          variant="solid"
-          onClick={() =>
-            void action(async () => {
-              await rpc('delete_repo', { repo_id: remove });
-              await store.refresh();
-              setRemove(null);
-            })
-          }
-        >
-          Disconnect project
-        </Button>
-      </Modal>
-    </>
+      ) : (
+        <>
+          <div className="relative">
+            <Search size={14} className="absolute top-2.5 left-3 text-faint" />
+            <input
+              autoFocus
+              aria-label="Filter repositories"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter repositories"
+              className="w-full !pl-8"
+            />
+          </div>
+          <div className="mt-3 max-h-80 overflow-y-auto">
+            {filtered.map((repo) => (
+              <button
+                key={repo.full_name}
+                disabled={!!cloning}
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] hover:bg-hover disabled:opacity-50"
+                onClick={() => void clone(repo)}
+              >
+                <Github size={14} className="shrink-0 text-muted" />
+                <span className="min-w-0 flex-1 truncate">{repo.full_name}</span>
+                {repo.private && <Lock size={12} className="shrink-0 text-faint" />}
+                {cloning === repo.full_name && <span className="text-xs text-muted">Cloning…</span>}
+              </button>
+            ))}
+            {!filtered.length && (
+              <p className="py-8 text-center text-[13px] text-muted">No repositories found</p>
+            )}
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }

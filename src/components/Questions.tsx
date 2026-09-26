@@ -1,9 +1,12 @@
 import { useState } from 'react';
-import { Check } from 'lucide-react';
-import { questionsFromEvent, formatQuestionAnswers } from '../lib/userQuestions';
-import type { AgentThreadEvent } from '../lib/types';
-import { Button } from './ui';
+import { Check, MessageCircleQuestion } from 'lucide-react';
 import { toast } from 'sonner';
+import { questionsFromEvent, formatQuestionAnswers } from '../lib/userQuestions';
+import { errorMessage } from '../lib/format';
+import type { AgentThreadEvent } from '../lib/types';
+import { Button, cn } from './ui';
+
+/** Multiple-choice questions an agent asks mid-task. */
 export function Questions({
   event,
   onAnswer,
@@ -12,69 +15,100 @@ export function Questions({
   onAnswer: (text: string) => Promise<void>;
 }) {
   const questions = questionsFromEvent(event);
-  const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const [picked, setPicked] = useState<Record<string, string[]>>({});
+  const [custom, setCustom] = useState<Record<string, string>>({});
+  const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   if (!questions.length) return null;
+  const answers = Object.fromEntries(
+    questions.map((q) => [
+      q.id,
+      [...(picked[q.id] ?? []), custom[q.id]?.trim() ?? ''].filter(Boolean),
+    ]),
+  );
+  const complete = questions.every((q) => answers[q.id].length > 0);
+  const toggle = (id: string, label: string, multi: boolean) =>
+    setPicked((old) => {
+      const current = old[id] ?? [];
+      if (!multi) return { ...old, [id]: current[0] === label ? [] : [label] };
+      return {
+        ...old,
+        [id]: current.includes(label) ? current.filter((v) => v !== label) : [...current, label],
+      };
+    });
   return (
-    <section className="my-5 rounded-xl border border-line p-5">
+    <section className="my-5 rounded-2xl border border-line bg-elevated/40 p-4">
+      <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted">
+        <MessageCircleQuestion size={14} />
+        {sent ? 'Answered' : 'Needs your input'}
+      </div>
       {questions.map((q) => (
-        <fieldset key={q.id} disabled={sent} className="mb-5">
-          <legend className="mb-3 text-sm font-medium">{q.question}</legend>
-          {q.options.map((option) => (
-            <label
-              key={option.label}
-              className="mb-2 flex items-start gap-3 rounded-lg border border-line/60 p-3 text-sm"
-            >
-              <input
-                type={q.multiSelect ? 'checkbox' : 'radio'}
-                name={q.id}
-                checked={(answers[q.id] || []).includes(option.label)}
-                onChange={(e) =>
-                  setAnswers((old) => ({
-                    ...old,
-                    [q.id]: q.multiSelect
-                      ? e.target.checked
-                        ? [...(old[q.id] || []), option.label]
-                        : (old[q.id] || []).filter((v) => v !== option.label)
-                      : [option.label],
-                  }))
-                }
-              />
-              <span>
-                {option.label}
-                <span className="mt-1 block text-xs text-muted">{option.description}</span>
-              </span>
-            </label>
-          ))}
+        <fieldset key={q.id} disabled={sent || sending} className="mb-4 last:mb-3">
+          <legend className="mb-2 text-[13px] font-medium">{q.question}</legend>
+          <div className="grid gap-1.5">
+            {q.options.map((option) => {
+              const on = (picked[q.id] ?? []).includes(option.label);
+              return (
+                <button
+                  type="button"
+                  key={option.label}
+                  onClick={() => toggle(q.id, option.label, q.multiSelect)}
+                  className={cn(
+                    'flex items-start gap-3 rounded-lg border px-3 py-2 text-left text-[13px] transition-colors disabled:cursor-default',
+                    on ? 'border-accent bg-accent/5' : 'border-line enabled:hover:bg-hover',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border',
+                      q.multiSelect ? 'rounded' : 'rounded-full',
+                      on ? 'border-accent bg-accent text-on-accent' : 'border-muted/60',
+                    )}
+                  >
+                    {on && <Check size={11} strokeWidth={3} />}
+                  </span>
+                  <span>
+                    {option.label}
+                    {option.description && (
+                      <span className="mt-0.5 block text-xs leading-5 text-muted">
+                        {option.description}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
           <input
-            aria-label={`Custom answer: ${q.header}`}
+            aria-label={`Other answer: ${q.header}`}
             className="mt-2 w-full"
-            placeholder="Or write your own answer…"
-            onChange={(e) => setAnswers((old) => ({ ...old, [q.id]: [e.target.value] }))}
+            placeholder={q.options.length ? 'Something else…' : 'Your answer'}
+            value={custom[q.id] ?? ''}
+            onChange={(e) => setCustom((old) => ({ ...old, [q.id]: e.target.value }))}
           />
         </fieldset>
       ))}
-      <Button
-        variant="solid"
-        disabled={sent || questions.some((q) => !answers[q.id]?.some(Boolean))}
-        onClick={async () => {
-          try {
-            await onAnswer(formatQuestionAnswers(questions, answers));
-            setSent(true);
-          } catch (error) {
-            toast.error(String(error));
-          }
-        }}
-      >
-        {sent ? (
-          <>
-            <Check size={14} />
-            Answer sent
-          </>
-        ) : (
-          'Send answer'
-        )}
-      </Button>
+      {!sent && (
+        <Button
+          variant="primary"
+          size="sm"
+          loading={sending}
+          disabled={!complete}
+          onClick={async () => {
+            setSending(true);
+            try {
+              await onAnswer(formatQuestionAnswers(questions, answers));
+              setSent(true);
+            } catch (error) {
+              toast.error(errorMessage(error));
+            } finally {
+              setSending(false);
+            }
+          }}
+        >
+          Send answer
+        </Button>
+      )}
     </section>
   );
 }

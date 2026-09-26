@@ -1,298 +1,452 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { Toaster } from 'sonner';
 import {
   PanelLeft,
   Minus,
   Square,
+  Copy,
   X,
   Search,
-  Plus,
+  SquarePen,
   Settings2,
   UsersRound,
   FolderGit2,
-  Clock3,
-  GitBranch,
-  ArrowUpRight,
-  Command,
-  SlidersHorizontal,
+  History,
+  ListTree,
 } from 'lucide-react';
 import { native, action } from './lib/api';
 import { useStore } from './lib/store';
-import { Button, IconButton, Modal, PerpetualMark, cn } from './components/ui';
+import { relativeTime, statusInfo } from './lib/format';
+import { Button, Dot, IconButton, Kbd, Modal, PerpetualMark, cn } from './components/ui';
+import { SidebarAccounts } from './components/AccountSwitcher';
 import { Conversation } from './components/Conversation';
 import { Accounts } from './components/Accounts';
 import { Settings } from './components/Settings';
 import { Projects } from './components/Projects';
 import { Activity } from './components/Activity';
 import { Plans } from './components/Plans';
+
+export type Page = 'chat' | 'projects' | 'plans' | 'accounts' | 'activity' | 'settings';
+export type Theme = 'dark' | 'light' | 'system';
+
+const PAGE_TITLES: Record<Page, string> = {
+  chat: 'New task',
+  projects: 'Projects',
+  plans: 'Plans',
+  accounts: 'Accounts',
+  activity: 'Activity',
+  settings: 'Settings',
+};
+
+function readTheme(): Theme {
+  try {
+    const value = localStorage.getItem('theme');
+    return value === 'light' || value === 'dark' || value === 'system' ? value : 'system';
+  } catch {
+    return 'system';
+  }
+}
+
+function useResolvedTheme(theme: Theme) {
+  const [systemDark, setSystemDark] = useState(
+    () => window.matchMedia('(prefers-color-scheme: dark)').matches,
+  );
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-color-scheme: dark)');
+    const update = () => setSystemDark(query.matches);
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  return theme === 'system' ? (systemDark ? 'dark' : 'light') : theme;
+}
+
 export default function App() {
   const store = useStore();
-  const [page, setPage] = useState('chat');
+  const [page, setPage] = useState<Page>('chat');
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState(false);
-  const [query, setQuery] = useState('');
   const [sidebar, setSidebar] = useState(true);
-  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
+  const [addAccount, setAddAccount] = useState(false);
+  const [theme, setTheme] = useState<Theme>(readTheme);
+  const [maximized, setMaximized] = useState(false);
+  const resolved = useResolvedTheme(theme);
+
   const newTask = () => {
     setSelected(null);
     setPage('chat');
   };
-  const selectThread = (id: string) => {
-    setSelected(id);
+  const selectThread = (id: string | null) => {
+    setSelected(id || null);
     setPage('chat');
     setSearch(false);
   };
+  const navigate = (next: string) => {
+    if (next === 'search') setSearch(true);
+    else if (next in PAGE_TITLES) setPage(next as Page);
+  };
+
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem('theme', theme);
-  }, [theme]);
+    document.documentElement.dataset.theme = resolved;
+    try {
+      localStorage.setItem('theme', theme);
+    } catch {
+      // Storage can be unavailable; the theme still applies for this session.
+    }
+  }, [theme, resolved]);
+
+  useEffect(() => {
+    if (!native) return;
+    const win = getCurrentWindow();
+    void win.isMaximized().then(setMaximized);
+    const off = win.onResized(() => void win.isMaximized().then(setMaximized));
+    return () => void off.then((fn) => fn());
+  }, []);
+
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      if (e.key === 'k') {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'k') {
         e.preventDefault();
         setSearch((v) => !v);
-      }
-      if (e.key === 'n') {
+      } else if (k === 'n' && !e.shiftKey) {
         e.preventDefault();
         newTask();
-      }
-      if (e.key === 'b') {
+      } else if (k === 'b') {
         e.preventDefault();
         setSidebar((v) => !v);
+      } else if (k === ',') {
+        e.preventDefault();
+        setPage('settings');
       }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   }, []);
+
+  // A deleted or missing task falls back to a new one.
   const thread = store.threads.find((t) => t.id === selected);
+  useEffect(() => {
+    if (selected && !store.loading && store.revision > 0 && !thread) setSelected(null);
+  }, [selected, thread, store.loading, store.revision]);
+
   const nav = [
     ['projects', FolderGit2, 'Projects'],
-    ['plans', GitBranch, 'Plans'],
+    ['plans', ListTree, 'Plans'],
+    ['activity', History, 'Activity'],
     ['accounts', UsersRound, 'Accounts'],
-    ['activity', Clock3, 'Activity'],
   ] as const;
+  const title = page === 'chat' ? thread?.title || 'New task' : PAGE_TITLES[page];
+
   return (
-    <div className="flex h-dvh overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {sidebar && (
-        <aside className="flex w-[250px] shrink-0 flex-col bg-sidebar px-3 pb-3">
-          <div data-tauri-drag-region className="flex h-[62px] shrink-0 items-center gap-2.5 px-3">
-            <PerpetualMark size={24} />
-            <span className="text-[16px] font-semibold tracking-tight">Perpetual</span>
-            <div className="ml-auto">
-              <IconButton label="Hide sidebar (Ctrl+B)" onClick={() => setSidebar(false)}>
-                <PanelLeft size={17} />
-              </IconButton>
-            </div>
+        <aside className="flex w-[248px] shrink-0 flex-col bg-sidebar">
+          <div data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-2 pr-2 pl-4">
+            <PerpetualMark size={18} />
+            <span data-tauri-drag-region className="text-[14px] font-semibold tracking-tight">
+              Perpetual
+            </span>
+            <IconButton
+              className="ml-auto"
+              label="Hide sidebar (Ctrl+B)"
+              onClick={() => setSidebar(false)}
+            >
+              <PanelLeft size={16} />
+            </IconButton>
           </div>
-          <button
-            onClick={newTask}
-            className="mb-1 flex h-10 items-center gap-3 rounded-lg px-3 text-sm hover:bg-hover"
-          >
-            <Plus size={18} />
-            <span>New task</span>
-            <span className="ml-auto text-[11px] text-muted">Ctrl N</span>
-          </button>
-          <button
-            onClick={() => setSearch(true)}
-            className="mb-5 flex h-10 items-center gap-3 rounded-lg px-3 text-sm text-muted hover:bg-hover hover:text-ink"
-          >
-            <Search size={17} />
-            <span>Search tasks</span>
-            <span className="ml-auto text-[11px]">Ctrl K</span>
-          </button>
-          <nav className="space-y-0.5">
-            {nav.map(([id, Icon, title]) => (
-              <button
+          <div className="space-y-0.5 px-2 pt-1">
+            <SidebarButton
+              icon={SquarePen}
+              label="New task"
+              hint="Ctrl N"
+              active={page === 'chat' && !selected}
+              onClick={newTask}
+            />
+            <SidebarButton
+              icon={Search}
+              label="Search"
+              hint="Ctrl K"
+              onClick={() => setSearch(true)}
+            />
+          </div>
+          <nav className="mt-3 space-y-0.5 px-2">
+            {nav.map(([id, Icon, label]) => (
+              <SidebarButton
                 key={id}
+                icon={Icon}
+                label={label}
+                active={page === id}
                 onClick={() => setPage(id)}
-                className={cn(
-                  'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors',
-                  page === id ? 'bg-hover text-ink' : 'text-muted hover:bg-hover hover:text-ink',
-                )}
-              >
-                <Icon size={17} strokeWidth={1.7} />
-                {title}
-                {id === 'accounts' && store.accounts.length > 0 && (
-                  <span className="ml-auto text-xs">{store.accounts.length}</span>
-                )}
-              </button>
+              />
             ))}
           </nav>
-          <div className="mt-8 flex items-center justify-between px-3 text-xs text-muted">
-            <span>Recent tasks</span>
-            <button aria-label="New task" onClick={newTask} className="rounded p-1 hover:bg-hover">
-              <Plus size={14} />
-            </button>
-          </div>
-          <div className="mt-2 flex-1 overflow-y-auto">
-            {store.threads.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => selectThread(t.id)}
-                className={cn(
-                  'group my-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-[13px]',
-                  selected === t.id && page === 'chat'
-                    ? 'bg-hover'
-                    : 'text-muted hover:bg-hover hover:text-ink',
-                )}
-              >
-                <span className="truncate">{t.title}</span>
-                {['running', 'waiting_for_limit', 'awaiting_approval'].includes(t.status) && (
-                  <span className="ml-auto shrink-0 text-[10px] text-accent">
-                    {t.status === 'running' ? 'Running' : 'Waiting'}
-                  </span>
-                )}
-              </button>
-            ))}
-            {!store.threads.length && (
-              <p className="px-3 py-3 text-xs leading-5 text-muted/65">
-                Your tasks will appear here.
-                <br />
-                Pick up right where you left off.
-              </p>
+          <div className="mt-5 px-5 pb-1 text-[11px] font-medium text-faint">Tasks</div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+            {store.threads.map((t) => {
+              const status = statusInfo(t.status);
+              const flagged = status.live || status.tone === 'warning' || status.tone === 'danger';
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => selectThread(t.id)}
+                  title={t.title}
+                  className={cn(
+                    'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] transition-colors',
+                    selected === t.id && page === 'chat'
+                      ? 'bg-hover text-ink'
+                      : 'text-muted hover:bg-hover hover:text-ink',
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{t.title || 'Untitled task'}</span>
+                  {flagged && <Dot tone={status.tone} live={status.live} />}
+                </button>
+              );
+            })}
+            {!store.threads.length && !store.loading && (
+              <p className="px-3 py-1.5 text-xs text-faint">No tasks yet</p>
             )}
           </div>
-          <div className="mx-1 mb-3 rounded-xl border border-line/60 px-3 py-3">
-            <div className="flex items-center gap-2 text-xs">
-              <GitBranch size={14} className="text-accent" />
-              Keep your work moving
-            </div>
-            <p className="mt-1.5 text-[11px] leading-5 text-muted">
-              {store.policy?.auto_switch
-                ? 'Automatic account switching is on.'
-                : 'Connect accounts for seamless continuity.'}
-            </p>
-            <button
-              onClick={() => setPage('accounts')}
-              className="mt-2 flex items-center gap-1 text-[11px] text-accent"
-            >
-              Manage accounts <ArrowUpRight size={12} />
-            </button>
+          <div className="space-y-0.5 border-t border-line/60 p-2">
+            <SidebarAccounts
+              onManage={() => setPage('accounts')}
+              onAdd={() => {
+                setPage('accounts');
+                setAddAccount(true);
+              }}
+            />
+            <SidebarButton
+              icon={Settings2}
+              label="Settings"
+              active={page === 'settings'}
+              onClick={() => setPage('settings')}
+            />
           </div>
-          <button
-            onClick={() => setPage('settings')}
-            className={cn(
-              'flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] hover:bg-hover',
-              page === 'settings' ? 'bg-hover' : 'text-muted',
-            )}
-          >
-            <Settings2 size={17} />
-            Settings<span className="ml-auto text-[10px] text-muted">Desktop</span>
-          </button>
         </aside>
       )}
       <main className="flex min-w-0 flex-1 flex-col bg-surface">
         <header
           data-tauri-drag-region
-          className="flex h-[58px] shrink-0 items-center border-b border-line/40 pl-5"
+          className="flex h-12 shrink-0 items-center gap-1 border-b border-line/50 pl-3"
         >
           {!sidebar && (
-            <IconButton label="Show sidebar" onClick={() => setSidebar(true)}>
-              <PanelLeft size={17} />
+            <IconButton label="Show sidebar (Ctrl+B)" onClick={() => setSidebar(true)}>
+              <PanelLeft size={16} />
             </IconButton>
           )}
-          <span className="ml-2 truncate text-[13px] text-muted">
-            {page === 'chat'
-              ? thread?.title || 'New task'
-              : page.charAt(0).toUpperCase() + page.slice(1)}
+          <span data-tauri-drag-region className="ml-2 min-w-0 truncate text-[13px] text-muted">
+            {title}
           </span>
           {!native && (
-            <span className="ml-3 rounded-md border border-line px-2 py-0.5 text-[10px] text-muted">
-              Browser preview
+            <span className="ml-2 rounded-md border border-line px-1.5 py-0.5 text-[10px] text-faint">
+              Preview
             </span>
           )}
-          <div className="ml-auto flex h-full items-center pr-2">
-            {native && (
-              <>
-                <IconButton
-                  label="Minimize"
-                  onClick={() => void action(() => getCurrentWindow().minimize())}
-                >
-                  <Minus size={15} />
-                </IconButton>
-                <IconButton
-                  label="Maximize"
-                  onClick={() => void action(() => getCurrentWindow().toggleMaximize())}
-                >
-                  <Square size={12} />
-                </IconButton>
-                <IconButton
-                  label="Close"
-                  onClick={() => void action(() => getCurrentWindow().close())}
-                >
-                  <X size={16} />
-                </IconButton>
-              </>
-            )}
-          </div>
+          {native && (
+            <div className="ml-auto flex h-full items-stretch">
+              <WindowButton label="Minimize" onClick={() => getCurrentWindow().minimize()}>
+                <Minus size={15} />
+              </WindowButton>
+              <WindowButton
+                label={maximized ? 'Restore' : 'Maximize'}
+                onClick={() => getCurrentWindow().toggleMaximize()}
+              >
+                {maximized ? <Copy size={12} className="-scale-x-100" /> : <Square size={12} />}
+              </WindowButton>
+              <WindowButton label="Close" close onClick={() => getCurrentWindow().close()}>
+                <X size={16} />
+              </WindowButton>
+            </div>
+          )}
         </header>
         {store.error && (
           <div
             role="alert"
-            className="flex items-center gap-3 border-b border-amber-600/20 bg-amber-500/5 px-6 py-2 text-xs text-amber-300"
+            className="flex items-center gap-3 border-b border-line/50 bg-warning/10 px-5 py-2 text-xs text-warning"
           >
-            <span className="flex-1">{store.error}</span>
-            <Button onClick={() => void store.refresh()}>Retry</Button>
+            <span className="min-w-0 flex-1 truncate">{store.error}</span>
+            <Button size="sm" variant="secondary" onClick={() => void store.refresh()}>
+              Try again
+            </Button>
           </div>
         )}
         {page === 'chat' ? (
           <Conversation
-            onNavigate={(name) => (name === 'search' ? setSearch(true) : setPage(name))}
             key={selected || 'new'}
             thread={thread}
             onSelect={selectThread}
-            onAccounts={() => setPage('accounts')}
+            onNavigate={navigate}
           />
         ) : (
-          <div className="flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-[1000px] px-10 py-10">
-              {page === 'accounts' && <Accounts />}
+          <div key={page} className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-[880px] px-6 py-9 sm:px-10">
+              {page === 'accounts' && <Accounts addOpen={addAccount} setAddOpen={setAddAccount} />}
               {page === 'settings' && <Settings theme={theme} setTheme={setTheme} />}
               {page === 'projects' && <Projects />}
-              {page === 'activity' && <Activity />}
+              {page === 'activity' && <Activity onSelect={selectThread} />}
               {page === 'plans' && <Plans onSelect={selectThread} />}
             </div>
           </div>
         )}
       </main>
-      <Modal
-        open={search}
-        onOpenChange={setSearch}
-        title="Find a task"
-        description="Search your persistent sessions."
-      >
-        <div className="relative">
-          <Search size={17} className="absolute left-3 top-3 text-muted" />
-          <input
-            autoFocus
-            aria-label="Search tasks"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by title or objective…"
-            className="w-full !pl-10"
-          />
-        </div>
-        <div className="mt-4 max-h-80 overflow-y-auto">
-          {store.threads
-            .filter((t) => `${t.title} ${t.objective}`.toLowerCase().includes(query.toLowerCase()))
-            .map((t) => (
-              <button
-                key={t.id}
-                onClick={() => selectThread(t.id)}
-                className="flex w-full items-center justify-between rounded-lg p-3 text-left text-sm hover:bg-hover"
-              >
-                {t.title}
-                <span className="text-xs text-muted">{t.status.replaceAll('_', ' ')}</span>
-              </button>
-            ))}
-          {!store.threads.length && (
-            <p className="py-7 text-center text-sm text-muted">
-              No tasks yet. Start with a new task.
-            </p>
-          )}
-        </div>
-      </Modal>
+      <SearchDialog open={search} onOpenChange={setSearch} onSelect={selectThread} />
+      <Toaster
+        theme={resolved}
+        position="bottom-right"
+        toastOptions={{
+          classNames: {
+            toast: '!bg-elevated !border-line !text-ink !rounded-xl !shadow-xl',
+            description: '!text-muted',
+          },
+        }}
+      />
     </div>
+  );
+}
+
+function SidebarButton({
+  icon: Icon,
+  label,
+  hint,
+  active,
+  onClick,
+}: {
+  icon: typeof Search;
+  label: string;
+  hint?: string;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'group flex h-8 w-full items-center gap-2.5 rounded-lg px-3 text-[13px] transition-colors',
+        active ? 'bg-hover text-ink' : 'text-muted hover:bg-hover hover:text-ink',
+      )}
+    >
+      <Icon size={16} strokeWidth={1.75} />
+      <span>{label}</span>
+      {hint && (
+        <span className="ml-auto text-[11px] text-faint opacity-0 transition-opacity group-hover:opacity-100">
+          {hint}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function WindowButton({
+  label,
+  close,
+  onClick,
+  children,
+}: {
+  label: string;
+  close?: boolean;
+  onClick: () => Promise<void>;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      aria-label={label}
+      title={label}
+      onClick={() => void action(onClick)}
+      className={cn(
+        'flex w-11 items-center justify-center text-muted transition-colors',
+        close ? 'hover:bg-[#c42b1c] hover:text-white' : 'hover:bg-hover hover:text-ink',
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SearchDialog({
+  open,
+  onOpenChange,
+  onSelect,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onSelect: (id: string) => void;
+}) {
+  const store = useStore();
+  const [query, setQuery] = useState('');
+  const [index, setIndex] = useState(0);
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return store.threads
+      .filter((t) => !q || `${t.title} ${t.objective}`.toLowerCase().includes(q))
+      .slice(0, 50);
+  }, [store.threads, query]);
+  useEffect(() => {
+    if (open) {
+      setQuery('');
+      setIndex(0);
+    }
+  }, [open]);
+  useEffect(() => setIndex(0), [query]);
+  return (
+    <Modal open={open} onOpenChange={onOpenChange} title="Search tasks" width={560}>
+      <div className="relative">
+        <Search size={15} className="absolute top-2.5 left-3 text-faint" />
+        <input
+          autoFocus
+          aria-label="Search tasks"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setIndex((i) => Math.min(i + 1, results.length - 1));
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              setIndex((i) => Math.max(i - 1, 0));
+            } else if (e.key === 'Enter' && results[index]) {
+              e.preventDefault();
+              onSelect(results[index].id);
+            }
+          }}
+          placeholder="Search by title or request"
+          className="w-full !pl-9"
+        />
+      </div>
+      <div className="mt-3 max-h-80 overflow-y-auto">
+        {results.map((t, i) => {
+          const status = statusInfo(t.status);
+          return (
+            <button
+              key={t.id}
+              onMouseEnter={() => setIndex(i)}
+              onClick={() => onSelect(t.id)}
+              className={cn(
+                'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px]',
+                i === index && 'bg-hover',
+              )}
+            >
+              <Dot tone={status.tone} live={status.live} />
+              <span className="min-w-0 flex-1 truncate">{t.title || 'Untitled task'}</span>
+              <span className="shrink-0 text-xs text-faint">{relativeTime(t.updated_at)}</span>
+            </button>
+          );
+        })}
+        {!results.length && (
+          <p className="py-8 text-center text-[13px] text-muted">
+            {store.threads.length ? 'No matching tasks' : 'No tasks yet'}
+          </p>
+        )}
+      </div>
+      <div className="mt-3 flex items-center gap-3 text-[11px] text-faint">
+        <span className="flex items-center gap-1">
+          <Kbd>↑</Kbd>
+          <Kbd>↓</Kbd> to move
+        </span>
+        <span className="flex items-center gap-1">
+          <Kbd>Enter</Kbd> to open
+        </span>
+      </div>
+    </Modal>
   );
 }

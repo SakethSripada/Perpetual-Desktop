@@ -78,6 +78,8 @@ export function buildTranscriptItems(input: {
   queued: QueuedTurn[];
   cloudRuns: CloudRun[];
   pending?: PendingTranscriptMessage[];
+  /** Resolves a provider account id to the name people know it by. */
+  accountLabel?: (id: string) => string | null;
 }): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   const transitionIds = new Set<string>();
@@ -124,7 +126,7 @@ export function buildTranscriptItems(input: {
       limitTransitionAdded = true;
       continue;
     }
-    const transition = transitionFromActivity(activity);
+    const transition = transitionFromActivity(activity, input.accountLabel);
     if (!transition) continue;
     if (isLimitActivity(activity.kind)) limitTransitionAdded = true;
     transitionIds.add(transition.id);
@@ -281,7 +283,8 @@ function isRoutineEvent(event: AgentThreadEvent): boolean {
   // Provider/system envelopes are operational metadata, never conversation.
   // Keeping this boundary here prevents a newly introduced system-prompt event
   // from accidentally becoming visible just because the renderer understands it.
-  if (event.role === 'system') return true;
+  // Provider errors are the one system envelope people must see.
+  if (event.role === 'system') return event.kind !== 'error' || !event.text?.trim();
   if (event.kind === 'session_started') return true;
   if (event.kind === 'token_usage') return true;
   if (event.kind === 'usage_limit') return true;
@@ -320,7 +323,10 @@ export function publicUserMessage(value: string): string {
 
 type TransitionItem = Extract<TranscriptItem, { type: 'transition' }>;
 
-function transitionFromActivity(activity: ActivityEvent): TransitionItem | null {
+function transitionFromActivity(
+  activity: ActivityEvent,
+  accountLabel?: (id: string) => string | null,
+): TransitionItem | null {
   const payload = asRecord(activity.payload);
   const agent = parseAgent(payload.agent);
   const from = parseAgent(payload.from);
@@ -354,6 +360,22 @@ function transitionFromActivity(activity: ActivityEvent): TransitionItem | null 
         detail,
         'clock',
       );
+    case 'thread.account_switched': {
+      const id = typeof payload.account_id === 'string' ? payload.account_id : null;
+      const name = id ? accountLabel?.(id) : null;
+      const toAgent = parseAgent(payload.to_agent);
+      const fromAgent = parseAgent(payload.from_agent);
+      const target = name ?? `another ${labelAgent(toAgent)} account`;
+      return transition(
+        activity,
+        'warning',
+        fromAgent && toAgent && fromAgent !== toAgent
+          ? `${labelAgent(fromAgent)} reached its limit; continuing with ${labelAgent(toAgent)} (${target})`
+          : `Account limit reached; continuing with ${target}`,
+        null,
+        'refresh',
+      );
+    }
     case 'thread.switchback_started':
       return transition(
         activity,

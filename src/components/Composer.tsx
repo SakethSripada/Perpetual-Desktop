@@ -1,27 +1,49 @@
 import { toast } from 'sonner';
-import { commandPrompt, parseCommand, slashCommands } from '../lib/commands';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ArrowUp,
   ChevronDown,
   FolderGit2,
   Plus,
   Square,
-  SlidersHorizontal,
-  Gauge,
   ShieldCheck,
+  SlidersHorizontal,
+  TriangleAlert,
 } from 'lucide-react';
-import { useStore } from '../lib/store';
+import { commandPrompt, parseCommand, slashCommands } from '../lib/commands';
+import { activeAccount, useStore } from '../lib/store';
 import { action, rpc } from '../lib/api';
+import { PROVIDERS, accountName, accountState, providerName } from '../lib/format';
 import type {
   AgentKind,
   AgentThread,
+  AgentThreadRepo,
   ExecutionBackend,
   PermissionPolicy,
   TaskBudget,
-  AgentThreadRepo,
 } from '../lib/types';
-import { Button, Modal, ProviderLogo, Select, cn } from './ui';
+import { AccountMenuContent } from './AccountSwitcher';
+import {
+  Button,
+  MenuCheckboxItem,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRoot,
+  MenuSeparator,
+  MenuSub,
+  MenuSubContent,
+  MenuSubTrigger,
+  MenuTrigger,
+  Modal,
+  ProviderLogo,
+  Select,
+  Tip,
+  cn,
+} from './ui';
+
 export interface RunOptions {
   agent: AgentKind;
   permission: PermissionPolicy;
@@ -33,6 +55,25 @@ export interface RunOptions {
   local_provider?: string | null;
   local_base_url?: string | null;
 }
+
+const ACCESS: Record<PermissionPolicy, { label: string; detail: string }> = {
+  read_only: { label: 'Read only', detail: 'Can read files but not change them' },
+  workspace_write: { label: 'Workspace', detail: 'Can edit files in the task workspace' },
+  autonomous: { label: 'Full access', detail: 'Can run any command without asking' },
+};
+
+const LAST_AGENT = 'composer.agent';
+function initialAgent(thread?: AgentThread): AgentKind {
+  if (thread?.active_agent) return thread.active_agent;
+  try {
+    const saved = localStorage.getItem(LAST_AGENT);
+    if (saved === 'codex' || saved === 'claude_code') return saved;
+  } catch {
+    // Fall through to the default.
+  }
+  return 'codex';
+}
+
 export function Composer({
   thread,
   busy,
@@ -40,17 +81,22 @@ export function Composer({
   onStop,
   draft,
   onCommand,
+  onNavigate,
+  hero,
 }: {
   thread?: AgentThread;
   draft: { text: string; seq: number };
   onCommand: (name: string) => void;
+  onNavigate: (page: string) => void;
   busy: boolean;
   onSend: (message: string, options: RunOptions) => Promise<boolean>;
   onStop: () => void;
+  /** The larger, centered composer used to start a task. */
+  hero?: boolean;
 }) {
   const store = useStore();
   const [text, setText] = useState('');
-  const [agent, setAgent] = useState<AgentKind>(thread?.active_agent || 'codex');
+  const [agent, setAgent] = useState<AgentKind>(() => initialAgent(thread));
   const [model, setModel] = useState(thread?.model || '');
   const [reasoning, setReasoning] = useState(thread?.reasoning || '');
   const [permission, setPermission] = useState<PermissionPolicy>(
@@ -60,12 +106,22 @@ export function Composer({
   const [repos, setRepos] = useState<string[]>([]);
   const [budget, setBudget] = useState<TaskBudget>(thread?.task_budget || { mode: 'unlimited' });
   const [options, setOptions] = useState(false);
+  const [suggestion, setSuggestion] = useState(0);
   const input = useRef<HTMLTextAreaElement>(null);
+
   const catalog = store.models.find((m) => m.agent === agent);
+  const models = catalog?.models.filter((m) => m.available || m.id === model) ?? [];
   const chosenModel = catalog?.models.find((m) => m.id === model);
   const efforts = chosenModel?.reasoning || catalog?.reasoning || [];
   const running =
-    thread && ['running', 'running_in_cloud', 'awaiting_approval'].includes(thread.status);
+    !!thread &&
+    ['running', 'running_in_cloud', 'awaiting_approval', 'queued'].includes(thread.status);
+  const account = activeAccount(store.accounts, agent);
+  const providerAccounts = store.accounts.filter((a) => a.agent === agent);
+  const managed = providerAccounts.length > 0;
+  const allLimited =
+    managed && !account && providerAccounts.some((a) => accountState(a) === 'limited');
+
   useEffect(() => {
     input.current?.focus();
   }, []);
@@ -81,14 +137,44 @@ export function Composer({
       setModel(thread.model || '');
       setReasoning(thread.reasoning || '');
     }
-  }, [thread?.active_agent]);
+  }, [thread?.active_agent, thread?.model, thread?.reasoning]);
   useEffect(() => {
-    if (thread)
-      void action(async () => {
-        const links = await rpc<AgentThreadRepo[]>('list_thread_repos', { thread_id: thread.id });
-        setRepos(links.map((link) => link.repo_id));
-      });
+    if (!thread) return;
+    void action(async () => {
+      const links = await rpc<AgentThreadRepo[]>('list_thread_repos', { thread_id: thread.id });
+      setRepos(links.map((link) => link.repo_id));
+    });
   }, [thread?.id]);
+  // Grow with the text, up to a comfortable limit.
+  useLayoutEffect(() => {
+    const el = input.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 280)}px`;
+  }, [text]);
+
+  const chooseAgent = (next: AgentKind) => {
+    setAgent(next);
+    setModel('');
+    setReasoning('');
+    if (next === 'claude_code') {
+      if (budget.mode === 'weekly_percent') setBudget({ mode: 'unlimited' });
+      if (backend === 'docker_sandbox') setBackend('host');
+    }
+    try {
+      localStorage.setItem(LAST_AGENT, next);
+    } catch {
+      // Not persisted; the choice still applies to this task.
+    }
+  };
+  const chooseRepos = (next: string[]) => {
+    setRepos(next);
+    if (thread && !running)
+      void action(async () => {
+        await rpc('assign_thread_repos', { thread_id: thread.id, repo_ids: next });
+      });
+  };
+
   const send = async () => {
     if (!text.trim() || busy) return;
     let message = text.trim();
@@ -96,20 +182,33 @@ export function Composer({
     const command = parseCommand(message);
     if (command) {
       if (command.name === 'model') {
-        if (!command.argument) {
-          setOptions(true);
+        const match = models.find(
+          (m) =>
+            m.id.toLowerCase() === command.argument.toLowerCase() ||
+            m.label.toLowerCase() === command.argument.toLowerCase() ||
+            m.aliases.includes(command.argument.toLowerCase()),
+        );
+        if (!match) {
+          toast.info(
+            command.argument
+              ? `No model named "${command.argument}".`
+              : 'Choose a model from the menu below.',
+          );
           return;
         }
-        setModel(command.argument);
+        setModel(match.id);
         setReasoning('');
         setText('');
-        toast.success('Model updated');
+        toast.success(`Model set to ${match.label}`);
         return;
       }
       if (command.name === 'effort') {
         if (!efforts.includes(command.argument)) {
-          setOptions(true);
-          toast.info('Choose a supported reasoning level.');
+          toast.info(
+            efforts.length
+              ? `Choose one of: ${efforts.join(', ')}.`
+              : 'This model has no reasoning levels.',
+          );
           return;
         }
         setReasoning(command.argument);
@@ -122,24 +221,26 @@ export function Composer({
           'read-only': 'read_only',
           read_only: 'read_only',
           write: 'workspace_write',
+          workspace: 'workspace_write',
           workspace_write: 'workspace_write',
           'workspace-write': 'workspace_write',
+          full: 'autonomous',
           autonomous: 'autonomous',
           'full-access': 'autonomous',
         };
         if (!map[command.argument]) {
-          setOptions(true);
+          toast.info('Use read-only, workspace, or full-access.');
           return;
         }
         setPermission(map[command.argument]);
         setText('');
         return;
       }
-      const prompt = commandPrompt(command.name, command.argument, agent);
       if (command.name === 'debug' && !command.argument) {
         toast.info('Describe the problem after /debug.');
         return;
       }
+      const prompt = commandPrompt(command.name, command.argument, agent);
       if (prompt) {
         message = prompt;
         if (['plan', 'review', 'security-review'].includes(command.name))
@@ -150,7 +251,9 @@ export function Composer({
           setText('/');
           return;
         } else if (command.name === 'status')
-          toast.info(`${agent} · ${model || 'Default model'} · ${permission} · ${backend}`);
+          toast.info(
+            `${providerName(agent)} · ${chosenModel?.label || 'Default model'} · ${ACCESS[permission].label}${account ? ` · ${accountName(account)}` : ''}`,
+          );
         else onCommand(command.name);
         setText('');
         return;
@@ -171,36 +274,92 @@ export function Composer({
     )
       setText('');
   };
+
   const suggestions = /^\/[a-z-]*$/.test(text)
     ? slashCommands.filter(([name]) => name.startsWith(text.slice(1)))
     : [];
+  useEffect(() => setSuggestion(0), [text]);
+  const complete = (name: string) => {
+    setText(`/${name} `);
+    input.current?.focus();
+  };
+
+  const repoLabel = repos.length
+    ? repos.length === 1
+      ? (store.repos.find((r) => r.id === repos[0])?.name ?? '1 project')
+      : `${repos.length} projects`
+    : 'No project';
+
   return (
-    <>
+    <div className="relative">
       {suggestions.length > 0 && (
-        <div className="mb-2 max-h-48 overflow-auto rounded-xl border border-line bg-elevated p-2">
-          {suggestions.map(([name, description]) => (
+        <div
+          role="listbox"
+          className={cn(
+            'absolute right-0 left-0 z-20 max-h-64 overflow-y-auto rounded-xl border border-line bg-elevated p-1 shadow-xl',
+            hero ? 'top-full mt-2' : 'bottom-full mb-2',
+          )}
+        >
+          {suggestions.map(([name, description], index) => (
             <button
               key={name}
-              onClick={() => {
-                setText(`/${name} `);
-                input.current?.focus();
+              role="option"
+              aria-selected={index === suggestion}
+              onMouseEnter={() => setSuggestion(index)}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                complete(name);
               }}
-              className="flex w-full items-center gap-4 rounded-lg px-3 py-2 text-left text-xs hover:bg-hover"
+              className={cn(
+                'flex w-full items-center gap-4 rounded-lg px-3 py-1.5 text-left text-[13px]',
+                index === suggestion && 'bg-hover',
+              )}
             >
-              <span className="w-24 font-medium">/{name}</span>
-              <span className="text-muted">{description}</span>
+              <span className="w-32 shrink-0 font-medium">/{name}</span>
+              <span className="truncate text-muted">{description}</span>
             </button>
           ))}
         </div>
       )}
-      <div className="rounded-[20px] border border-line bg-elevated shadow-[0_8px_35px_-20px_#0008] focus-within:border-muted/60">
+      <div
+        className={cn(
+          'rounded-2xl border border-line bg-elevated transition-colors focus-within:border-muted/50',
+          hero
+            ? 'shadow-[0_12px_40px_-24px_rgba(0,0,0,0.5)]'
+            : 'shadow-[0_8px_30px_-22px_rgba(0,0,0,0.5)]',
+        )}
+      >
         <textarea
           ref={input}
           aria-label="Message"
           value={text}
-          rows={3}
+          rows={hero ? 3 : 1}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
+            if (suggestions.length) {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                setSuggestion(
+                  (i) =>
+                    (i + (e.key === 'ArrowDown' ? 1 : -1) + suggestions.length) %
+                    suggestions.length,
+                );
+                return;
+              }
+              if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+                const [name] = suggestions[suggestion];
+                if (`/${name}` !== text.trim() || e.key === 'Tab') {
+                  e.preventDefault();
+                  complete(name);
+                  return;
+                }
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setText('');
+                return;
+              }
+            }
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               void send();
@@ -208,231 +367,315 @@ export function Composer({
           }}
           placeholder={
             running
-              ? 'Add a follow-up. It will join the queue…'
-              : 'Describe what you want to work on…'
-          }
-          className="block max-h-60 min-h-[110px] w-full resize-y bg-transparent px-5 pb-2 pt-5 text-[15px] leading-6 placeholder:text-muted/75"
-        />
-        <div className="flex flex-wrap items-center gap-1 px-3 pb-3">
-          <Button title="Task settings" onClick={() => setOptions(true)} className="h-8 w-8 p-0">
-            <Plus size={20} />
-          </Button>
-          <div className="h-4 w-px bg-line mx-1" />
-          <button
-            onClick={() => setOptions(true)}
-            className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-hover"
-          >
-            <ProviderLogo agent={agent} size={17} />
-            {chosenModel?.label || (agent === 'codex' ? 'Codex' : 'Claude Code')}
-            <ChevronDown size={12} className="text-muted" />
-          </button>
-          <Button onClick={() => setOptions(true)} className="text-xs">
-            <FolderGit2 size={14} />
-            {repos.length
-              ? `${repos.length} ${repos.length === 1 ? 'project' : 'projects'}`
+              ? 'Add a follow-up — it runs when the current step finishes'
               : thread
-                ? 'Workspace'
-                : 'Add project'}
-          </Button>
+                ? 'Reply…'
+                : 'Describe a task, or type / for commands'
+          }
+          className={cn(
+            'block w-full resize-none bg-transparent px-4 text-[14px] leading-6 placeholder:text-faint',
+            hero ? 'min-h-[88px] pt-4 pb-1' : 'min-h-[48px] pt-3 pb-1',
+          )}
+        />
+        <div className="flex items-center gap-0.5 px-2 pb-2">
+          <MenuRoot>
+            <MenuTrigger asChild>
+              <button className="flex h-8 max-w-56 items-center gap-2 rounded-lg px-2 text-xs text-ink/90 hover:bg-hover data-[state=open]:bg-hover">
+                <ProviderLogo agent={agent} size={15} />
+                <span className="truncate">{chosenModel?.label || providerName(agent)}</span>
+                {reasoning && <span className="text-muted capitalize">{reasoning}</span>}
+                <ChevronDown size={12} className="shrink-0 text-muted" />
+              </button>
+            </MenuTrigger>
+            <MenuContent align="start" side={hero ? 'bottom' : 'top'} className="w-64">
+              <MenuLabel>Agent</MenuLabel>
+              <MenuRadioGroup value={agent} onValueChange={(v) => chooseAgent(v as AgentKind)}>
+                {PROVIDERS.map((kind) => {
+                  const ready = !!activeAccount(store.accounts, kind);
+                  const known = store.accounts.some((a) => a.agent === kind);
+                  return (
+                    <MenuRadioItem key={kind} value={kind} disabled={running && kind !== agent}>
+                      <ProviderLogo agent={kind} size={14} />
+                      <span className="flex-1">{providerName(kind)}</span>
+                      {known && !ready && (
+                        <span className="text-[11px] text-faint">Unavailable</span>
+                      )}
+                    </MenuRadioItem>
+                  );
+                })}
+              </MenuRadioGroup>
+              <MenuSeparator />
+              <MenuSub>
+                <MenuSubTrigger>
+                  <span className="flex-1">Model</span>
+                  <span className="max-w-28 truncate text-xs text-muted">
+                    {chosenModel?.label || 'Default'}
+                  </span>
+                </MenuSubTrigger>
+                <MenuSubContent className="w-60">
+                  <MenuRadioGroup
+                    value={model}
+                    onValueChange={(v) => {
+                      setModel(v);
+                      setReasoning('');
+                    }}
+                  >
+                    <MenuRadioItem value="">Default</MenuRadioItem>
+                    {models.map((m) => (
+                      <MenuRadioItem key={m.id} value={m.id}>
+                        <span className="truncate">{m.label}</span>
+                      </MenuRadioItem>
+                    ))}
+                  </MenuRadioGroup>
+                </MenuSubContent>
+              </MenuSub>
+              <MenuSub>
+                <MenuSubTrigger disabled={!efforts.length}>
+                  <span className="flex-1">Reasoning</span>
+                  <span className="text-xs text-muted capitalize">{reasoning || 'Default'}</span>
+                </MenuSubTrigger>
+                <MenuSubContent className="w-44">
+                  <MenuRadioGroup value={reasoning} onValueChange={setReasoning}>
+                    <MenuRadioItem value="">Default</MenuRadioItem>
+                    {efforts.map((r) => (
+                      <MenuRadioItem key={r} value={r}>
+                        <span className="capitalize">{r}</span>
+                      </MenuRadioItem>
+                    ))}
+                  </MenuRadioGroup>
+                </MenuSubContent>
+              </MenuSub>
+            </MenuContent>
+          </MenuRoot>
+
+          <MenuRoot>
+            <MenuTrigger asChild disabled={running}>
+              <button className="flex h-8 max-w-44 items-center gap-1.5 rounded-lg px-2 text-xs text-muted hover:bg-hover hover:text-ink disabled:opacity-50 data-[state=open]:bg-hover">
+                <FolderGit2 size={14} className="shrink-0" />
+                <span className="truncate">{repoLabel}</span>
+                <ChevronDown size={12} className="shrink-0" />
+              </button>
+            </MenuTrigger>
+            <MenuContent align="start" side={hero ? 'bottom' : 'top'} className="w-64">
+              <MenuLabel>Projects in this task</MenuLabel>
+              {store.repos.map((repo) => (
+                <MenuCheckboxItem
+                  key={repo.id}
+                  checked={repos.includes(repo.id)}
+                  onSelect={(e) => e.preventDefault()}
+                  onCheckedChange={(checked) =>
+                    chooseRepos(
+                      checked ? [...repos, repo.id] : repos.filter((id) => id !== repo.id),
+                    )
+                  }
+                >
+                  <span className="truncate">{repo.name}</span>
+                </MenuCheckboxItem>
+              ))}
+              {!store.repos.length && (
+                <p className="px-2.5 pb-1.5 text-xs leading-5 text-muted">
+                  Without a project, the task gets an empty workspace.
+                </p>
+              )}
+              <MenuSeparator />
+              <MenuItem onSelect={() => onNavigate('projects')}>
+                <Plus size={14} className="text-muted" />
+                Add project
+              </MenuItem>
+            </MenuContent>
+          </MenuRoot>
+
+          <MenuRoot>
+            <MenuTrigger asChild>
+              <button className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs text-muted hover:bg-hover hover:text-ink data-[state=open]:bg-hover">
+                <ShieldCheck
+                  size={14}
+                  className={cn(permission === 'autonomous' && 'text-warning')}
+                />
+                <span className="hidden sm:inline">{ACCESS[permission].label}</span>
+                <ChevronDown size={12} />
+              </button>
+            </MenuTrigger>
+            <MenuContent align="start" side={hero ? 'bottom' : 'top'} className="w-72">
+              <MenuLabel>Access</MenuLabel>
+              <MenuRadioGroup
+                value={permission}
+                onValueChange={(v) => setPermission(v as PermissionPolicy)}
+              >
+                {(Object.keys(ACCESS) as PermissionPolicy[]).map((key) => (
+                  <MenuRadioItem key={key} value={key} className="h-auto py-1.5">
+                    <div>
+                      <div>{ACCESS[key].label}</div>
+                      <div className="text-[11px] text-muted">{ACCESS[key].detail}</div>
+                    </div>
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuContent>
+          </MenuRoot>
+
+          <Tip label="Task options">
+            <button
+              aria-label="Task options"
+              onClick={() => setOptions(true)}
+              className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-hover hover:text-ink',
+                (backend !== 'host' || budget.mode !== 'unlimited') && 'text-accent',
+              )}
+            >
+              <SlidersHorizontal size={14} />
+            </button>
+          </Tip>
+
           <span className="flex-1" />
           {running && (
-            <Button title="Stop task" onClick={onStop} className="h-8 w-8 p-0">
-              <Square size={14} fill="currentColor" />
-            </Button>
+            <Tip label="Stop">
+              <button
+                aria-label="Stop"
+                onClick={onStop}
+                className="mr-1 flex h-8 w-8 items-center justify-center rounded-full border border-line text-ink hover:bg-hover"
+              >
+                <Square size={11} fill="currentColor" />
+              </button>
+            </Tip>
           )}
-          <button
-            aria-label={running ? 'Queue message' : 'Send message'}
-            onClick={() => void send()}
-            disabled={!text.trim() || busy}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-surface transition-opacity disabled:opacity-25"
-          >
-            <ArrowUp size={19} />
-          </button>
+          <Tip label={running ? 'Queue follow-up (Enter)' : 'Send (Enter)'}>
+            <button
+              aria-label={running ? 'Queue follow-up' : 'Send'}
+              onClick={() => void send()}
+              disabled={!text.trim() || busy}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-surface transition-opacity hover:opacity-85 disabled:opacity-25"
+            >
+              <ArrowUp size={17} strokeWidth={2.25} />
+            </button>
+          </Tip>
         </div>
       </div>
-      <div className="mt-3 flex items-center justify-between px-2 text-[11px] text-muted/80">
-        <button
-          onClick={() => setOptions(true)}
-          className="flex items-center gap-1.5 hover:text-ink"
-        >
-          <ShieldCheck size={12} />
-          {permission === 'autonomous'
-            ? 'Full access'
-            : permission === 'read_only'
-              ? 'Read only'
-              : 'Workspace access'}
-          <ChevronDown size={10} />
-        </button>
-        <span>
-          {budget.mode !== 'unlimited'
-            ? budget.mode === 'tokens'
-              ? `${budget.limit_tokens.toLocaleString()} token budget`
-              : `${budget.limit_percent}% weekly budget`
-            : 'Enter to send · Shift Enter for a new line'}
-        </span>
+
+      <div className="mt-2 flex min-h-5 items-center justify-between gap-3 px-1 text-xs">
+        {managed ? (
+          <MenuRoot>
+            <MenuTrigger asChild>
+              <button
+                className={cn(
+                  'flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 hover:bg-hover',
+                  account ? 'text-faint hover:text-muted' : 'text-warning',
+                )}
+              >
+                {!account && <TriangleAlert size={12} className="shrink-0" />}
+                <span className="truncate">
+                  {account
+                    ? accountName(account)
+                    : allLimited
+                      ? `Every ${providerName(agent)} account is at its limit`
+                      : `No ${providerName(agent)} account is signed in`}
+                </span>
+                <ChevronDown size={11} className="shrink-0" />
+              </button>
+            </MenuTrigger>
+            <AccountMenuContent
+              agents={[agent]}
+              side={hero ? 'bottom' : 'top'}
+              onManage={() => onNavigate('accounts')}
+            />
+          </MenuRoot>
+        ) : (
+          <span />
+        )}
+        {budget.mode !== 'unlimited' && (
+          <span className="shrink-0 text-faint">
+            {budget.mode === 'tokens'
+              ? `${budget.limit_tokens.toLocaleString()}-token budget`
+              : `${budget.limit_percent}% of weekly usage`}
+          </span>
+        )}
       </div>
+
       <Modal
         open={options}
         onOpenChange={setOptions}
-        title="Task settings"
-        description="Choose how this task runs. Your agent works in an isolated workspace."
+        title="Task options"
+        width={440}
+        footer={
+          <Button variant="primary" onClick={() => setOptions(false)}>
+            Done
+          </Button>
+        }
       >
-        <div className="space-y-5">
-          <label className="grid gap-2 text-sm">
-            Agent
+        <div className="grid gap-5">
+          <label className="grid gap-1.5 text-[13px]">
+            Run on
             <Select
-              value={agent}
-              onChange={(e) => {
-                setAgent(e.target.value as AgentKind);
-                setModel('');
-                setReasoning('');
-                if (e.target.value === 'claude_code' && budget.mode === 'weekly_percent')
-                  setBudget({ mode: 'unlimited' });
-              }}
+              value={backend}
+              disabled={running}
+              onChange={(e) => setBackend(e.target.value as ExecutionBackend)}
             >
-              <option value="codex">OpenAI Codex</option>
-              <option value="claude_code">Claude Code</option>
-            </Select>
-          </label>
-          <label className="grid gap-2 text-sm">
-            Model
-            <Select
-              value={model}
-              onChange={(e) => {
-                setModel(e.target.value);
-                setReasoning('');
-              }}
-            >
-              <option value="">Provider default</option>
-              {catalog?.models
-                .filter((m) => m.available)
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))}
-            </Select>
-          </label>
-          {!!efforts.length && (
-            <label className="grid gap-2 text-sm">
-              Reasoning effort
-              <Select value={reasoning} onChange={(e) => setReasoning(e.target.value)}>
-                <option value="">Default</option>
-                {efforts.map((r) => (
-                  <option key={r}>{r}</option>
-                ))}
-              </Select>
-            </label>
-          )}
-          <div className="grid grid-cols-2 gap-4">
-            <label className="grid gap-2 text-sm">
-              Permissions
-              <Select
-                value={permission}
-                onChange={(e) => setPermission(e.target.value as PermissionPolicy)}
-              >
-                <option value="read_only">Read only</option>
-                <option value="workspace_write">Workspace write</option>
-                <option value="autonomous">Full access</option>
-              </Select>
-            </label>
-            <label className="grid gap-2 text-sm">
-              Environment
-              <Select
-                value={backend}
-                onChange={(e) => setBackend(e.target.value as ExecutionBackend)}
-              >
-                <option value="host">Local machine</option>
-                <option value="docker_sandbox" disabled={agent !== 'codex'}>
-                  Docker Sandbox
-                </option>
-              </Select>
-            </label>
-          </div>
-          <fieldset disabled={!!running}>
-            <legend className="mb-2 text-sm">Projects</legend>
-            {store.repos.length ? (
-              store.repos.map((r) => (
-                <label key={r.id} className="flex items-center gap-2 py-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={repos.includes(r.id)}
-                    onChange={(e) =>
-                      setRepos((old) =>
-                        e.target.checked ? [...old, r.id] : old.filter((id) => id !== r.id),
-                      )
-                    }
-                  />
-                  {r.name}
-                </label>
-              ))
-            ) : (
-              <p className="text-xs text-muted">Add a repository from Projects in the sidebar.</p>
-            )}
-          </fieldset>
-          <label className="grid gap-2 text-sm">
-            Task budget
-            <Select
-              value={budget.mode}
-              onChange={(e) =>
-                setBudget(
-                  e.target.value === 'tokens'
-                    ? { mode: 'tokens', limit_tokens: 100000 }
-                    : e.target.value === 'weekly_percent'
-                      ? { mode: 'weekly_percent', limit_percent: 5 }
-                      : { mode: 'unlimited' },
-                )
-              }
-            >
-              <option value="unlimited">No limit</option>
-              <option value="tokens">Token target</option>
-              <option value="weekly_percent" disabled={agent !== 'codex'}>
-                Weekly percentage (Codex)
+              <option value="host">This computer</option>
+              <option value="docker_sandbox" disabled={agent !== 'codex'}>
+                Docker Sandbox{agent !== 'codex' ? ' (Codex only)' : ''}
               </option>
             </Select>
           </label>
-          {budget.mode !== 'unlimited' && (
-            <input
-              aria-label="Budget value"
-              type="number"
-              min={budget.mode === 'tokens' ? 10000 : 1}
-              max={budget.mode === 'weekly_percent' ? 100 : undefined}
-              value={budget.mode === 'tokens' ? budget.limit_tokens : budget.limit_percent}
-              onChange={(e) =>
-                setBudget(
-                  budget.mode === 'tokens'
-                    ? {
-                        mode: 'tokens',
-                        limit_tokens: Math.min(
-                          10000000,
-                          Math.max(10000, Math.round(+e.target.value)),
-                        ),
-                      }
-                    : {
-                        mode: 'weekly_percent',
-                        limit_percent: Math.min(100, Math.max(1, Math.round(+e.target.value))),
-                      },
-                )
-              }
-            />
-          )}
-          <Button
-            variant="solid"
-            className="w-full"
-            onClick={() =>
-              void action(async () => {
-                if (thread && !running) {
-                  await rpc('assign_thread_repos', { thread_id: thread.id, repo_ids: repos });
-                  await store.refresh();
+          <div className="grid gap-1.5 text-[13px]">
+            Usage budget
+            <div className="flex gap-2">
+              <Select
+                aria-label="Usage budget"
+                className="flex-1"
+                value={budget.mode}
+                onChange={(e) =>
+                  setBudget(
+                    e.target.value === 'tokens'
+                      ? { mode: 'tokens', limit_tokens: 200000 }
+                      : e.target.value === 'weekly_percent'
+                        ? { mode: 'weekly_percent', limit_percent: 5 }
+                        : { mode: 'unlimited' },
+                  )
                 }
-                setOptions(false);
-              })
-            }
-          >
-            Done
-          </Button>
+              >
+                <option value="unlimited">No limit</option>
+                <option value="tokens">Token budget</option>
+                <option value="weekly_percent" disabled={agent !== 'codex'}>
+                  Share of weekly usage{agent !== 'codex' ? ' (Codex only)' : ''}
+                </option>
+              </Select>
+              {budget.mode !== 'unlimited' && (
+                <input
+                  aria-label="Budget amount"
+                  type="number"
+                  className="!w-32 text-right tabular-nums"
+                  min={budget.mode === 'tokens' ? 10000 : 1}
+                  max={budget.mode === 'tokens' ? 10000000 : 100}
+                  step={budget.mode === 'tokens' ? 10000 : 1}
+                  value={budget.mode === 'tokens' ? budget.limit_tokens : budget.limit_percent}
+                  onChange={(e) =>
+                    setBudget(
+                      budget.mode === 'tokens'
+                        ? {
+                            mode: 'tokens',
+                            limit_tokens: Math.min(
+                              10000000,
+                              Math.max(10000, Math.round(+e.target.value || 0)),
+                            ),
+                          }
+                        : {
+                            mode: 'weekly_percent',
+                            limit_percent: Math.min(
+                              100,
+                              Math.max(1, Math.round(+e.target.value || 0)),
+                            ),
+                          },
+                    )
+                  }
+                />
+              )}
+            </div>
+            <span className="text-xs leading-5 text-muted">
+              The task pauses at the end of the step that reaches the budget.
+            </span>
+          </div>
         </div>
       </Modal>
-    </>
+    </div>
   );
 }
