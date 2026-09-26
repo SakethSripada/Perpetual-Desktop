@@ -20,6 +20,7 @@ use crate::local_models::{
     legacy_run_target_hash, normalize_model_target, run_target_hash, target_hash_matches,
 };
 use crate::policy::PolicyPreflightInput;
+use crate::provider_accounts::AccountSelection;
 use crate::sandbox::SandboxLease;
 use crate::{AppCore, ApprovalScope, CoreError};
 
@@ -435,7 +436,46 @@ impl AppCore {
             ));
         }
         validate_runtime_budget(&thread.task_budget, agent, backend, local_model.is_some())?;
-        if local_model.is_none() {
+        let account = if local_model.is_some() {
+            None
+        } else {
+            match self.select_provider_account(agent).await? {
+                AccountSelection::Unmanaged => None,
+                AccountSelection::Ready(account) => Some(account),
+                AccountSelection::SignedOut => {
+                    return Err(CoreError::Other(format!(
+                        "No {} account is signed in. Sign in from Accounts to continue.",
+                        agent.label()
+                    )));
+                }
+                AccountSelection::Limited { reset_at } => {
+                    if crate::budget::is_percentage_budget(&thread.task_budget) {
+                        thread.status = TaskStatus::Paused;
+                        let saved =
+                            am_db::repos::agent_thread::save(&self.db.pool, &thread).await?;
+                        self.events.publish(AppEvent::AgentThreadUpdated(saved));
+                        return Err(CoreError::Other(
+                            "Percentage budgets pause when the selected provider is limited; they do not switch providers because quota percentages are not comparable.".into(),
+                        ));
+                    }
+                    // Every account of this provider is limited: keep the
+                    // message and continue on another account, or wait.
+                    let queued_id = self
+                        .queue_known_limited_message(
+                            thread_id,
+                            agent,
+                            &permission_to_string(permission),
+                            message,
+                            policy.envelope_id.as_deref(),
+                        )
+                        .await?;
+                    self.start_thread_fallback(thread_id, agent, None, reset_at)
+                        .await;
+                    return Ok(queued_id.unwrap_or_else(|| thread_id.to_string()));
+                }
+            }
+        };
+        if local_model.is_none() && account.is_none() {
             if let Some(reset_at) = self.known_limited_agent_reset(agent).await? {
                 if crate::budget::is_percentage_budget(&thread.task_budget) {
                     thread.status = TaskStatus::Paused;
@@ -487,6 +527,18 @@ impl AppCore {
             thread.local_provider,
             thread.local_base_url.as_deref(),
         );
+        // Provider sessions live inside one account profile, so a session is
+        // only resumed by the profile that created it.
+        let (target_hash, legacy_target_hash) =
+            match account.as_ref().and_then(|a| a.profile.as_deref()) {
+                Some(profile) => {
+                    let hash = crate::context_index::stable_hex_hash(
+                        format!("{target_hash}|account={profile}").as_bytes(),
+                    );
+                    (hash.clone(), hash)
+                }
+                None => (target_hash, legacy_target_hash),
+            };
         if backend == ExecutionBackend::Host {
             let status = match self.fresh_ready_agent_status(agent).await? {
                 Some(status) => status,
@@ -498,9 +550,9 @@ impl AppCore {
                     agent.label()
                 )));
             }
-            if !status.authenticated && local_model.is_none() {
+            if !status.authenticated && local_model.is_none() && account.is_none() {
                 return Err(CoreError::Other(format!(
-                    "{} is installed but not authenticated",
+                    "{} is installed but not signed in. Sign in from Accounts to continue.",
                     agent.label()
                 )));
             }
@@ -624,6 +676,7 @@ impl AppCore {
 
         thread.status = TaskStatus::Running;
         thread.active_agent = Some(agent);
+        thread.provider_account_id = account.as_ref().map(|account| account.id.clone());
         thread.permission = permission_string.clone();
         thread.execution_backend = backend;
         if thread.preferred_agent.is_none() {
@@ -649,7 +702,6 @@ impl AppCore {
         let workspace_path = workspace.path;
         let mut runtime_policy = policy.runtime_policy.clone();
         runtime_policy.task_budget = Some(thread.task_budget.clone());
-        let account = self.select_provider_account(agent).await?;
         let provider_account_id = account.as_ref().map(|account| account.id.clone());
         if let Some(account) = account {
             runtime_policy.launch_env = account.env;
@@ -1971,23 +2023,47 @@ impl AppCore {
         reset_at: Option<chrono::DateTime<chrono::Utc>>,
     ) {
         if self.provider_accounts_configured().await {
-            if let Ok(Some(next)) = self.next_ready_provider_account(current_account_id).await {
-                self.start_thread_account_fallback(thread_id, current, next)
-                    .await;
-                return;
-            }
-            let reset_at = self
-                .earliest_provider_account_reset()
+            let auto_switch = self
+                .get_limit_policy()
                 .await
-                .ok()
-                .flatten()
-                .or(reset_at);
+                .map(|p| p.auto_switch)
+                .unwrap_or(true);
+            if auto_switch {
+                if let Ok(Some(next)) = self.next_ready_provider_account(current_account_id).await {
+                    self.start_thread_account_fallback(thread_id, current, next)
+                        .await;
+                    return;
+                }
+            }
+            // Without automatic switching the session waits for its own
+            // account; otherwise for whichever account resets first.
+            let own_reset = match current_account_id {
+                Some(id) => am_db::repos::provider_account::get(&self.db.pool, id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|state| state.reset_at),
+                None => None,
+            };
+            let reset_at = if auto_switch {
+                self.earliest_provider_account_reset()
+                    .await
+                    .ok()
+                    .flatten()
+                    .or(reset_at)
+            } else {
+                own_reset.or(reset_at)
+            };
             if let Ok(Some(mut thread)) =
                 am_db::repos::agent_thread::get(&self.db.pool, thread_id).await
             {
                 thread.status = TaskStatus::WaitingForLimit;
                 thread.limit_reset_at = reset_at;
-                thread.handoff_state = "waiting_for_account".into();
+                thread.handoff_state = if auto_switch {
+                    "waiting_for_account".into()
+                } else {
+                    "waiting_for_reset".into()
+                };
                 if let Ok(saved) = am_db::repos::agent_thread::save(&self.db.pool, &thread).await {
                     self.events.publish(AppEvent::AgentThreadUpdated(saved));
                 }
@@ -3527,6 +3603,7 @@ mod tests {
             limit_reset_at: None,
             switch_back: false,
             handoff_state: "local".into(),
+            provider_account_id: None,
             objective: "Fix auth".into(),
             decisions: String::new(),
             progress: String::new(),

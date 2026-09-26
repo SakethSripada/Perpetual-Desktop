@@ -39,14 +39,18 @@ pub async fn sign_in(
         | DaemonResponse::ProviderAccountToolingLaunch(value) => value,
         _ => return Err("Unexpected sign-in response".into()),
     };
-    launch_terminal(launch)
+    launch_terminal(launch, tooling)
 }
 
 #[cfg(windows)]
-fn launch_terminal(launch: am_proto::ProviderAccountAuthLaunch) -> Result<(), String> {
+fn launch_terminal(
+    launch: am_proto::ProviderAccountAuthLaunch,
+    tooling: bool,
+) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
     let quote = |value: &str| format!("'{}'", value.replace('\'', "''"));
-    let script = format!(
+    let command = format!(
         "& {} {}",
         quote(&launch.binary),
         launch
@@ -56,16 +60,46 @@ fn launch_terminal(launch: am_proto::ProviderAccountAuthLaunch) -> Result<(), St
             .collect::<Vec<_>>()
             .join(" ")
     );
+    let title = if tooling {
+        format!("Perpetual - {}", launch.label)
+    } else {
+        format!("Perpetual - Sign in to {}", launch.label)
+    };
+    // Sign-in windows close themselves once the provider CLI succeeds; the
+    // interactive CLI stays open until the user exits it.
+    let script = if tooling {
+        format!(
+            "$Host.UI.RawUI.WindowTitle = {}; Write-Host {} -ForegroundColor DarkGray; {}",
+            quote(&title),
+            quote(&launch.instructions),
+            command
+        )
+    } else {
+        format!(
+            "$Host.UI.RawUI.WindowTitle = {}; Write-Host {} -ForegroundColor DarkGray; {}; if ($LASTEXITCODE -eq 0) {{ exit }} else {{ Read-Host 'Sign-in did not finish. Press Enter to close' }}",
+            quote(&title),
+            quote(&launch.instructions),
+            command
+        )
+    };
+    let mut args = vec!["-NoProfile"];
+    if tooling {
+        args.push("-NoExit");
+    }
+    args.extend(["-Command", &script]);
     std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-NoExit", "-Command", &script])
+        .args(args)
         .envs(launch.env)
-        .creation_flags(0x00000010)
+        .creation_flags(CREATE_NEW_CONSOLE)
         .spawn()
         .map(|_| ())
         .map_err(|error| error.to_string())
 }
 
 #[cfg(not(windows))]
-fn launch_terminal(_launch: am_proto::ProviderAccountAuthLaunch) -> Result<(), String> {
+fn launch_terminal(
+    _launch: am_proto::ProviderAccountAuthLaunch,
+    _tooling: bool,
+) -> Result<(), String> {
     Err("Interactive account sign-in currently requires Windows. Claude setup tokens can be added in Accounts.".into())
 }

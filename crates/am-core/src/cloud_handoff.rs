@@ -1173,6 +1173,7 @@ mod tests {
             limit_reset_at: None,
             switch_back: false,
             handoff_state: "none".into(),
+            provider_account_id: None,
             objective: String::new(),
             decisions: String::new(),
             progress: String::new(),

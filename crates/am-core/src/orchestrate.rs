@@ -25,6 +25,7 @@ use crate::local_models::{
     legacy_run_target_hash, normalize_model_target, run_target_hash, target_hash_matches,
 };
 use crate::policy::PolicyPreflightInput;
+use crate::provider_accounts::AccountSelection;
 use crate::sandbox::SandboxLease;
 use crate::{AppCore, ApprovalScope, CoreError};
 
@@ -150,6 +151,7 @@ impl AppCore {
 
     /// Detect installed/authenticated agents for the settings view.
     pub async fn detect_agents(&self) -> Result<Vec<AgentStatus>, CoreError> {
+        crate::provider_accounts::invalidate_account_probes();
         let mut out = Vec::new();
 
         for adapter in self.agents.implemented() {
@@ -256,6 +258,26 @@ impl AppCore {
         } else {
             None
         };
+        let account = match self.select_provider_account(agent).await? {
+            AccountSelection::Unmanaged => None,
+            AccountSelection::Ready(account) => Some(account),
+            AccountSelection::SignedOut => {
+                return Err(CoreError::Other(format!(
+                    "No {} account is signed in. Sign in from Accounts to continue.",
+                    agent.label()
+                )));
+            }
+            AccountSelection::Limited { reset_at } => {
+                return Err(CoreError::Other(match reset_at {
+                    Some(at) => format!(
+                        "Every {} account is at its usage limit until {}.",
+                        agent.label(),
+                        at.with_timezone(&chrono::Local).format("%-I:%M %p")
+                    ),
+                    None => format!("Every {} account is at its usage limit.", agent.label()),
+                }));
+            }
+        };
 
         if backend == ExecutionBackend::Host {
             let status = match self.fresh_ready_agent_status(agent).await? {
@@ -268,9 +290,9 @@ impl AppCore {
                     agent.label()
                 )));
             }
-            if !status.authenticated && local_model.is_none() {
+            if !status.authenticated && local_model.is_none() && account.is_none() {
                 return Err(CoreError::Other(format!(
-                    "{} is installed but not authenticated",
+                    "{} is installed but not signed in. Sign in from Accounts to continue.",
                     agent.label()
                 )));
             }
@@ -295,6 +317,18 @@ impl AppCore {
             task.compute_lease_id.as_deref(),
         );
         let legacy_target_hash = legacy_run_target_hash(agent, model.as_deref(), None, None, None);
+        // Provider sessions live inside one account profile, so a session is
+        // only resumed by the profile that created it.
+        let (target_hash, legacy_target_hash) =
+            match account.as_ref().and_then(|a| a.profile.as_deref()) {
+                Some(profile) => {
+                    let hash = crate::context_index::stable_hex_hash(
+                        format!("{target_hash}|account={profile}").as_bytes(),
+                    );
+                    (hash.clone(), hash)
+                }
+                None => (target_hash, legacy_target_hash),
+            };
         let prior = self
             .latest_resumable_session_ref(task_id, agent, &target_hash, &legacy_target_hash)
             .await?;
@@ -349,7 +383,6 @@ impl AppCore {
         )
         .await?;
 
-        let account = self.select_provider_account(agent).await?;
         let provider_account_id = account.as_ref().map(|account| account.id.clone());
         let mut runtime_policy = policy.runtime_policy.clone();
         if let Some(account) = account {
@@ -773,10 +806,18 @@ impl AppCore {
                 return;
             }
             if self.provider_accounts_configured().await {
-                if let Ok(Some(next)) = self
-                    .next_ready_provider_account(provider_account_id.as_deref())
+                let auto_switch = self
+                    .get_limit_policy()
                     .await
-                {
+                    .map(|p| p.auto_switch)
+                    .unwrap_or(true);
+                let next = if auto_switch {
+                    self.next_ready_provider_account(provider_account_id.as_deref())
+                        .await
+                } else {
+                    Ok(None)
+                };
+                if let Ok(Some(next)) = next {
                     if let Ok(task) = am_db::repos::task::update(
                         &self.db.pool,
                         &task_id,
@@ -1384,7 +1425,7 @@ fn local_path_key(path: &str) -> String {
     }
 }
 
-fn normalize_limit_policy(mut policy: am_proto::LimitPolicy) -> am_proto::LimitPolicy {
+pub(crate) fn normalize_limit_policy(mut policy: am_proto::LimitPolicy) -> am_proto::LimitPolicy {
     policy.unknown_reset_retry_secs = policy.unknown_reset_retry_secs.min(7 * 24 * 60 * 60);
     let mut priority = Vec::new();
     for agent in policy.agent_priority {
@@ -1428,16 +1469,30 @@ fn normalize_limit_policy(mut policy: am_proto::LimitPolicy) -> am_proto::LimitP
             continue;
         }
         if account.agent == AgentKind::Codex {
-            account.auth_mode = am_proto::ProviderAccountAuthMode::IsolatedCli;
+            if account.auth_mode == am_proto::ProviderAccountAuthMode::OauthToken {
+                account.auth_mode = am_proto::ProviderAccountAuthMode::IsolatedCli;
+            }
         } else {
             account.use_credits = false;
         }
-        if let Some(existing) = accounts.iter_mut().find(|item| item.id == account.id) {
+        let system = account.auth_mode == am_proto::ProviderAccountAuthMode::System;
+        if let Some(existing) = accounts.iter_mut().find(|item| {
+            item.id == account.id
+                || (system
+                    && item.agent == account.agent
+                    && item.auth_mode == am_proto::ProviderAccountAuthMode::System)
+        }) {
             *existing = account;
         } else {
             accounts.push(account);
         }
     }
+    policy.dismissed_system_accounts.dedup();
+    policy.dismissed_system_accounts.retain(|agent| {
+        !accounts
+            .iter()
+            .any(|a| a.agent == *agent && a.auth_mode == am_proto::ProviderAccountAuthMode::System)
+    });
     policy.accounts = accounts;
     policy
 }

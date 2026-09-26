@@ -461,15 +461,26 @@ impl AppCore {
             self.provider_account_statuses().await.unwrap_or_default()
         };
 
+        let ready = |status: &&am_proto::ProviderAccountStatus| {
+            status.account.enabled
+                && status.authenticated
+                && status.availability != AvailabilityState::Limited
+        };
         for thread in threads {
-            let account_agent = account_statuses
-                .iter()
-                .find(|status| {
-                    status.account.enabled
-                        && status.authenticated
-                        && status.availability != AvailabilityState::Limited
-                })
-                .map(|status| status.account.agent);
+            let account_agent = if policy.auto_switch {
+                account_statuses.iter().find(ready).map(|s| s.account.agent)
+            } else {
+                // Without automatic switching a session resumes only when the
+                // account it was using is available again.
+                account_statuses
+                    .iter()
+                    .filter(ready)
+                    .find(|s| match thread.provider_account_id.as_deref() {
+                        Some(id) => s.account.id == id,
+                        None => Some(s.account.agent) == thread.active_agent,
+                    })
+                    .map(|s| s.account.agent)
+            };
             if let Some(agent) = account_agent.or_else(|| {
                 policy
                     .accounts
@@ -821,6 +832,7 @@ mod tests {
             limit_reset_at: None,
             switch_back: true,
             handoff_state: "waiting_for_reset".into(),
+            provider_account_id: None,
             objective: "do work".into(),
             decisions: String::new(),
             progress: String::new(),

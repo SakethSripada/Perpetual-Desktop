@@ -370,6 +370,15 @@ pub async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonRespon
             core.delete_provider_account(&account_id).await.map_err(s)?;
             A::Unit
         }
+        Q::ActivateProviderAccount { account_id } => {
+            core.activate_provider_account(&account_id)
+                .await
+                .map_err(s)?;
+            A::Unit
+        }
+        Q::AddSystemProviderAccount { agent } => {
+            A::ProviderAccountId(core.add_system_provider_account(agent).await.map_err(s)?)
+        }
         Q::DetectSandboxRuntime => {
             A::SandboxRuntimeStatus(core.detect_sandbox_runtime().await.map_err(s)?)
         }
