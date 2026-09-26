@@ -39,6 +39,7 @@ import {
   errorMessage,
   providerName,
   resetTime,
+  shellCommand,
   statusInfo,
 } from '../lib/format';
 import type {
@@ -687,11 +688,12 @@ function stepSummary(event: AgentThreadEvent): {
     return { label: ok ? 'Result' : 'Failed', detail: text || null, failed: !ok };
   }
   const input = (data.input ?? {}) as Record<string, unknown>;
-  const command = Array.isArray(input.command)
+  const raw = Array.isArray(input.command)
     ? input.command.join(' ')
     : typeof input.command === 'string'
       ? input.command
       : null;
+  const command = raw ? shellCommand(raw) : null;
   const target =
     command ??
     ['file_path', 'path', 'pattern', 'url', 'query', 'description']

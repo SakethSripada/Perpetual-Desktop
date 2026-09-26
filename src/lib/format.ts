@@ -127,3 +127,17 @@ export function errorMessage(error: unknown) {
   const text = error instanceof Error ? error.message : String(error);
   return text.replace(/^(Error|Other|CoreError|Server):\s*/i, '').trim() || 'Something went wrong.';
 }
+
+/** The command a tool ran, without the shell that wrapped it (`powershell -Command '…'`). */
+export function shellCommand(command: string) {
+  const match =
+    /^\s*"?[^"\s]*?\b(?:powershell|pwsh|cmd|bash|sh|zsh)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+)*(?:-Command|-c|-lc|\/c)\s+([\s\S]+)$/i.exec(
+      command,
+    );
+  if (!match) return command.trim();
+  const inner = match[1].trim();
+  const quote = inner[0];
+  return (quote === "'" || quote === '"') && inner.endsWith(quote) && inner.length > 1
+    ? inner.slice(1, -1)
+    : inner;
+}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { X, GitCompare, ChevronRight, RefreshCw, GitBranch } from 'lucide-react';
+import { toast } from 'sonner';
 import { action, rpc } from '../lib/api';
 import { errorMessage } from '../lib/format';
 import type { AgentThread, AgentThreadDiff, AgentThreadApplyResult } from '../lib/types';
@@ -31,6 +32,7 @@ export function Review({ thread, onClose }: { thread: AgentThread; onClose: () =
   const [loading, setLoading] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [result, setResult] = useState<AgentThreadApplyResult | null>(null);
+  const [applied, setApplied] = useState(false);
   const refresh = async () => {
     setLoading(true);
     try {
@@ -90,9 +92,13 @@ export function Review({ thread, onClose }: { thread: AgentThread; onClose: () =
           ) : !diff ? (
             <Empty title="Loading changes…" />
           ) : !repos.length ? (
-            <Empty icon={<GitCompare size={22} />} title="No changes yet">
-              Edits the agent makes in this task's workspace show up here for review before they
-              reach your project.
+            <Empty
+              icon={<GitCompare size={22} />}
+              title={applied ? 'All changes applied' : 'No changes yet'}
+            >
+              {applied
+                ? 'They are in your project folder now, ready for you to commit.'
+                : "Edits the agent makes in this task's workspace show up here for review before they reach your project."}
             </Empty>
           ) : (
             repos.map((repo) => (
@@ -135,10 +141,14 @@ export function Review({ thread, onClose }: { thread: AgentThread; onClose: () =
               thread_id: thread.id,
             });
             setResult(outcome);
-            if (outcome.applied) await refresh();
+            if (outcome.applied) {
+              setApplied(true);
+              toast.success('Changes applied to your project');
+              await refresh();
+            }
             return outcome.applied;
-          }).then((applied) => {
-            if (applied) setResult(null);
+          }).then((ok) => {
+            if (ok) setResult(null);
           })
         }
       />

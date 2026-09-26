@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { commandPrompt, parseCommand } from './commands';
 import { questionsFromEvent, formatQuestionAnswers } from './userQuestions';
 import { buildTranscriptItems } from './transcript';
-import { accountDetail, accountName, accountState } from './format';
+import { accountDetail, accountName, accountState, shellCommand } from './format';
 import type { AgentThreadEvent, ProviderAccountStatus } from './types';
 const event = (patch: Partial<AgentThreadEvent>): AgentThreadEvent => ({
   id: 'e1',
@@ -138,5 +138,16 @@ describe('account continuity', () => {
     expect(accountDetail(account({ auth_mode: 'system', plan: 'prolite' }))).toBe(
       'Shared with Codex CLI · Pro Lite',
     );
+  });
+});
+describe('tool steps', () => {
+  it('shows the command without its shell wrapper', () => {
+    expect(
+      shellCommand(
+        String.raw`"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'Get-Content -LiteralPath AGENTS.md'`,
+      ),
+    ).toBe('Get-Content -LiteralPath AGENTS.md');
+    expect(shellCommand("bash -lc 'npm test'")).toBe('npm test');
+    expect(shellCommand('git status')).toBe('git status');
   });
 });
