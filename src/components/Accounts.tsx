@@ -19,6 +19,7 @@ import {
   Gift,
 } from 'lucide-react';
 import { useStore } from '../lib/store';
+import { credentialStore } from '../lib/platform';
 import { action, native, rpc, signIn } from '../lib/api';
 import {
   INSTALL_URLS,
@@ -106,7 +107,7 @@ export function Accounts({
     <>
       <PageHeading
         title="Accounts"
-        description="Perpetual works on each provider's active account and moves down the list when one reaches its usage limit."
+        description="Tasks run on each provider's active account and move to the next one when it reaches a usage limit."
         actions={
           <>
             <IconButton label="Check sign-in status" onClick={() => void refresh()}>
@@ -265,7 +266,9 @@ export function Accounts({
                           }
                         >
                           <Gift size={14} className="text-muted" />
-                          {account.use_credits ? 'Stop using reset credits' : 'Use reset credits'}
+                          {account.use_credits
+                            ? 'Stop using reset credits'
+                            : 'Use earned reset credits'}
                         </MenuItem>
                       )}
                       <MenuItem
@@ -300,8 +303,7 @@ export function Accounts({
                 )
               }
             >
-              {!store.loading &&
-                'Add a Codex or Claude account. Each one signs in separately, so you can add several of each.'}
+              {!store.loading && 'Add a Codex or Claude account. You can add several of each.'}
             </Empty>
           )}
         </Card>
@@ -371,7 +373,7 @@ export function Accounts({
         description={
           remove?.auth_mode === 'system'
             ? `Perpetual will stop using this sign-in. You stay signed in to the ${remove ? providerName(remove.agent) : ''} CLI.`
-            : 'Its sign-in saved by Perpetual on this computer will be deleted.'
+            : 'Perpetual will delete the sign-in it saved for this account.'
         }
         confirmLabel="Remove"
         danger
@@ -614,7 +616,7 @@ function AddAccount({
       open={open}
       onOpenChange={(v) => (v ? onOpenChange(true) : close())}
       title="Add account"
-      description="Each account signs in separately and is kept apart from the others."
+      description="Each account has its own sign-in."
       footer={
         <>
           <Button variant="secondary" onClick={close}>
@@ -800,7 +802,7 @@ function TokenDialog({
       description={
         <>
           Paste the token printed by <code className="font-mono text-ink">claude setup-token</code>.
-          It's stored in the Windows Credential Manager, never in Perpetual's database.
+          It's stored in {credentialStore}, never in Perpetual's database.
         </>
       }
       footer={

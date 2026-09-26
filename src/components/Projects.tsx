@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { open } from '@tauri-apps/plugin-dialog';
 import {
   FolderGit2,
   Plus,
@@ -13,6 +12,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { useStore } from '../lib/store';
+import { useAddFolder } from './AddFolder';
 import { action, native, rpc } from '../lib/api';
 import type { GithubRepository, Repo } from '../lib/types';
 import {
@@ -32,17 +32,8 @@ export function Projects() {
   const store = useStore();
   const [github, setGithub] = useState(false);
   const [remove, setRemove] = useState<Repo | null>(null);
-  const connect = () =>
-    action(async () => {
-      const path = await open({
-        directory: true,
-        multiple: false,
-        title: 'Choose a project folder',
-      });
-      if (!path) return;
-      await rpc('connect_local_repo', { project_id: store.project?.id, path });
-      await store.refresh();
-    });
+  const folder = useAddFolder();
+  const connect = () => folder.pick();
   const addMenu = (
     <MenuRoot>
       <MenuTrigger asChild>
@@ -128,11 +119,12 @@ export function Projects() {
               </>
             }
           >
-            Add a Git repository from this computer or from GitHub to work on it in tasks.
+            Add any folder on this computer, or clone a repository from GitHub.
           </Empty>
         </Card>
       )}
       <GithubDialog open={github} onOpenChange={setGithub} />
+      {folder.dialog}
       <Confirm
         open={!!remove}
         onOpenChange={(v) => !v && setRemove(null)}

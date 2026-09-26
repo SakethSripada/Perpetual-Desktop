@@ -236,7 +236,7 @@ export function Modal({
           style={{ width: `min(${width}px, calc(100vw - 32px))` }}
           className="fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100vh-48px)] -translate-x-1/2 -translate-y-1/2 animate-pop-in flex-col overflow-hidden rounded-2xl border border-line bg-surface text-ink shadow-2xl outline-none"
         >
-          <div className="px-6 pt-5 pb-1">
+          <div className={cn('px-6 pt-5', children ? 'pb-1' : 'pb-5')}>
             <Dialog.Title className="pr-8 text-base font-semibold">{title}</Dialog.Title>
             <Dialog.Description
               className={cn('text-[13px] leading-5 text-muted', description && 'mt-1.5')}

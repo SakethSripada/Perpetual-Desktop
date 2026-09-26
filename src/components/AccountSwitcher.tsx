@@ -101,7 +101,7 @@ function AccountOption({ account }: { account: ProviderAccountStatus }) {
         <div className="truncate">{accountName(account)}</div>
         {state !== 'active' && state !== 'ready' ? (
           <div className={cn('text-[11px]', state === 'limited' ? 'text-warning' : 'text-faint')}>
-            {state === 'signed_out' ? 'Signed out · select to sign in' : accountStateLabel(account)}
+            {state === 'signed_out' ? 'Signed out · click to sign in' : accountStateLabel(account)}
           </div>
         ) : (
           planName(account.plan) && (

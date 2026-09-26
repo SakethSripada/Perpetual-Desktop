@@ -21,6 +21,7 @@ import { toast } from 'sonner';
 import type { Theme } from '../App';
 import { action, native, rpc } from '../lib/api';
 import { errorMessage, providerName } from '../lib/format';
+import { credentialStore, keys } from '../lib/platform';
 import type {
   CloudAvailability,
   CloudPolicy,
@@ -163,10 +164,10 @@ function General({ theme, setTheme }: { theme: Theme; setTheme: (v: Theme) => vo
         <div className="divide-y divide-line/60">
           {(
             [
-              ['New task', ['Ctrl', 'N']],
-              ['Search tasks', ['Ctrl', 'K']],
-              ['Show or hide the sidebar', ['Ctrl', 'B']],
-              ['Open settings', ['Ctrl', ',']],
+              ['New task', keys('N')],
+              ['Search tasks', keys('K')],
+              ['Show or hide the sidebar', keys('B')],
+              ['Open settings', keys(',')],
               ['Send message', ['Enter']],
               ['New line', ['Shift', 'Enter']],
             ] as const
@@ -213,7 +214,7 @@ function General({ theme, setTheme }: { theme: Theme; setTheme: (v: Theme) => vo
           )}
           <Row
             label="Privacy"
-            description="Tasks, settings, and sign-ins stay on this computer. Setup tokens are kept in Windows Credential Manager."
+            description={`Tasks, settings, and sign-ins stay on this computer. Setup tokens are kept in ${credentialStore}.`}
           />
         </div>
       </Section>

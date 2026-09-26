@@ -13,11 +13,12 @@ import {
   UsersRound,
   FolderGit2,
   History,
-  ListTree,
+  Workflow,
 } from 'lucide-react';
 import { native, action } from './lib/api';
 import { useStore } from './lib/store';
 import { relativeTime, statusInfo } from './lib/format';
+import { isMac, shortcut } from './lib/platform';
 import { Button, Dot, IconButton, Kbd, Modal, PerpetualMark, cn } from './components/ui';
 import { SidebarAccounts } from './components/AccountSwitcher';
 import { Conversation } from './components/Conversation';
@@ -25,15 +26,15 @@ import { Accounts } from './components/Accounts';
 import { Settings } from './components/Settings';
 import { Projects } from './components/Projects';
 import { Activity } from './components/Activity';
-import { Plans } from './components/Plans';
+import { Workflows } from './components/Workflows';
 
-export type Page = 'chat' | 'projects' | 'plans' | 'accounts' | 'activity' | 'settings';
+export type Page = 'chat' | 'projects' | 'workflows' | 'accounts' | 'activity' | 'settings';
 export type Theme = 'dark' | 'light' | 'system';
 
 const PAGE_TITLES: Record<Page, string> = {
   chat: 'New task',
   projects: 'Projects',
-  plans: 'Plans',
+  workflows: 'Workflows',
   accounts: 'Accounts',
   activity: 'Activity',
   settings: 'Settings',
@@ -133,7 +134,7 @@ export default function App() {
 
   const nav = [
     ['projects', FolderGit2, 'Projects'],
-    ['plans', ListTree, 'Plans'],
+    ['workflows', Workflow, 'Workflows'],
     ['activity', History, 'Activity'],
     ['accounts', UsersRound, 'Accounts'],
   ] as const;
@@ -143,14 +144,20 @@ export default function App() {
     <div className="flex h-full overflow-hidden">
       {sidebar && (
         <aside className="flex w-[248px] shrink-0 flex-col bg-sidebar">
-          <div data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-2 pr-2 pl-4">
+          <div
+            data-tauri-drag-region
+            className={cn(
+              'flex h-12 shrink-0 items-center gap-2 pr-2',
+              isMac ? 'pl-[88px]' : 'pl-4',
+            )}
+          >
             <PerpetualMark size={18} />
             <span data-tauri-drag-region className="text-[14px] font-semibold tracking-tight">
               Perpetual
             </span>
             <IconButton
               className="ml-auto"
-              label="Hide sidebar (Ctrl+B)"
+              label={`Hide sidebar (${shortcut('B')})`}
               onClick={() => setSidebar(false)}
             >
               <PanelLeft size={16} />
@@ -160,14 +167,14 @@ export default function App() {
             <SidebarButton
               icon={SquarePen}
               label="New task"
-              hint="Ctrl N"
+              hint={shortcut('N')}
               active={page === 'chat' && !selected}
               onClick={newTask}
             />
             <SidebarButton
               icon={Search}
               label="Search"
-              hint="Ctrl K"
+              hint={shortcut('K')}
               onClick={() => setSearch(true)}
             />
           </div>
@@ -228,10 +235,13 @@ export default function App() {
       <main className="flex min-w-0 flex-1 flex-col bg-surface">
         <header
           data-tauri-drag-region
-          className="flex h-12 shrink-0 items-center gap-1 border-b border-line/50 pl-3"
+          className={cn(
+            'flex h-12 shrink-0 items-center gap-1 border-b border-line/50 pl-3',
+            isMac && !sidebar && 'pl-[84px]',
+          )}
         >
           {!sidebar && (
-            <IconButton label="Show sidebar (Ctrl+B)" onClick={() => setSidebar(true)}>
+            <IconButton label={`Show sidebar (${shortcut('B')})`} onClick={() => setSidebar(true)}>
               <PanelLeft size={16} />
             </IconButton>
           )}
@@ -243,7 +253,7 @@ export default function App() {
               Preview
             </span>
           )}
-          {native && (
+          {native && !isMac && (
             <div className="ml-auto flex h-full items-stretch">
               <WindowButton label="Minimize" onClick={() => getCurrentWindow().minimize()}>
                 <Minus size={15} />
@@ -285,7 +295,7 @@ export default function App() {
               {page === 'settings' && <Settings theme={theme} setTheme={setTheme} />}
               {page === 'projects' && <Projects />}
               {page === 'activity' && <Activity onSelect={selectThread} />}
-              {page === 'plans' && <Plans onSelect={selectThread} />}
+              {page === 'workflows' && <Workflows onSelect={selectThread} />}
             </div>
           </div>
         )}

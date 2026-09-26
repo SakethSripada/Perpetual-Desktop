@@ -4,7 +4,7 @@ import {
   ArrowUp,
   ChevronDown,
   FolderGit2,
-  Plus,
+  FolderOpen,
   Square,
   ShieldCheck,
   SlidersHorizontal,
@@ -23,6 +23,7 @@ import type {
   TaskBudget,
 } from '../lib/types';
 import { AccountMenuContent } from './AccountSwitcher';
+import { useAddFolder } from './AddFolder';
 import {
   Button,
   MenuCheckboxItem,
@@ -95,6 +96,7 @@ export function Composer({
   hero?: boolean;
 }) {
   const store = useStore();
+  const folder = useAddFolder();
   const [text, setText] = useState('');
   const [agent, setAgent] = useState<AgentKind>(() => initialAgent(thread));
   const [model, setModel] = useState(thread?.model || '');
@@ -201,7 +203,7 @@ export function Composer({
           toast.info(
             command.argument
               ? `No model named "${command.argument}".`
-              : 'Choose a model from the menu below.',
+              : 'Choose a model from the model menu.',
           );
           return;
         }
@@ -295,9 +297,9 @@ export function Composer({
 
   const repoLabel = repos.length
     ? repos.length === 1
-      ? (store.repos.find((r) => r.id === repos[0])?.name ?? '1 project')
+      ? (store.repos.find((r) => r.id === repos[0])?.name ?? '1 folder')
       : `${repos.length} projects`
-    : 'No project';
+    : 'No folder';
 
   return (
     <div className="relative">
@@ -376,7 +378,7 @@ export function Composer({
           }}
           placeholder={
             running
-              ? 'Add a follow-up — it runs when the current step finishes'
+              ? 'Add a follow-up…'
               : thread
                 ? 'Reply…'
                 : 'Describe a task, or type / for commands'
@@ -466,7 +468,7 @@ export function Composer({
               </button>
             </MenuTrigger>
             <MenuContent align="start" side={hero ? 'bottom' : 'top'} className="w-64">
-              <MenuLabel>Projects in this task</MenuLabel>
+              <MenuLabel>Folders this task works in</MenuLabel>
               {store.repos.map((repo) => (
                 <MenuCheckboxItem
                   key={repo.id}
@@ -483,13 +485,19 @@ export function Composer({
               ))}
               {!store.repos.length && (
                 <p className="px-2.5 pb-1.5 text-xs leading-5 text-muted">
-                  Without a project, the task gets an empty workspace.
+                  Without a folder, the task starts in an empty workspace.
                 </p>
               )}
               <MenuSeparator />
-              <MenuItem onSelect={() => onNavigate('projects')}>
-                <Plus size={14} className="text-muted" />
-                Add project
+              <MenuItem
+                onSelect={() =>
+                  void folder.pick().then((repo) => {
+                    if (repo && !repos.includes(repo.id)) chooseRepos([...repos, repo.id]);
+                  })
+                }
+              >
+                <FolderOpen size={14} className="text-muted" />
+                Choose a folder…
               </MenuItem>
             </MenuContent>
           </MenuRoot>
@@ -685,6 +693,7 @@ export function Composer({
           </div>
         </div>
       </Modal>
+      {folder.dialog}
     </div>
   );
 }

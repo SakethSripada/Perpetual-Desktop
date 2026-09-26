@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  ListTree,
+  Workflow,
   Plus,
   Play,
   Square,
@@ -8,11 +8,15 @@ import {
   MoreHorizontal,
   CornerDownRight,
   ArrowUpRight,
+  FolderOpen,
+  FolderGit2,
+  ChevronDown,
 } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { action, native, rpc } from '../lib/api';
 import { PROVIDERS, errorMessage, providerName, statusInfo } from '../lib/format';
-import type { AgentKind, WorkGraph, WorkNode } from '../lib/types';
+import type { AgentKind, Repo, WorkGraph, WorkNode } from '../lib/types';
+import { useAddFolder } from './AddFolder';
 import {
   Button,
   Card,
@@ -21,6 +25,9 @@ import {
   Empty,
   MenuContent,
   MenuItem,
+  MenuLabel,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuRoot,
   MenuSeparator,
   MenuTrigger,
@@ -33,7 +40,7 @@ import {
 
 const RUNNING = ['running', 'running_in_cloud', 'awaiting_approval', 'queued'];
 
-/** Orders nodes as a tree: each parent followed by its children. */
+/** Orders nodes as a tree: each step followed by the steps that come after it. */
 function flatten(nodes: WorkNode[]) {
   const byParent = new Map<string | null, WorkNode[]>();
   const ids = new Set(nodes.map((n) => n.id));
@@ -55,7 +62,53 @@ function flatten(nodes: WorkNode[]) {
   return out;
 }
 
-export function Plans({ onSelect }: { onSelect: (id: string) => void }) {
+/** Picks the folder a step works in: a known project or any folder on disk. */
+function FolderMenu({
+  value,
+  onChange,
+  trigger,
+}: {
+  value: string;
+  onChange: (repoId: string) => void;
+  trigger: ReactNode;
+}) {
+  const store = useStore();
+  const folder = useAddFolder();
+  return (
+    <>
+      <MenuRoot>
+        <MenuTrigger asChild>{trigger}</MenuTrigger>
+        <MenuContent align="start" className="w-64">
+          <MenuLabel>Work in</MenuLabel>
+          <MenuRadioGroup value={value} onValueChange={onChange}>
+            <MenuRadioItem value="">No folder</MenuRadioItem>
+            {store.repos.map((repo: Repo) => (
+              <MenuRadioItem key={repo.id} value={repo.id}>
+                <span className="truncate" title={repo.local_path ?? undefined}>
+                  {repo.name}
+                </span>
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+          <MenuSeparator />
+          <MenuItem
+            onSelect={() =>
+              void folder.pick().then((repo) => {
+                if (repo) onChange(repo.id);
+              })
+            }
+          >
+            <FolderOpen size={14} className="text-muted" />
+            Choose a folder…
+          </MenuItem>
+        </MenuContent>
+      </MenuRoot>
+      {folder.dialog}
+    </>
+  );
+}
+
+export function Workflows({ onSelect }: { onSelect: (id: string) => void }) {
   const store = useStore();
   const [graph, setGraph] = useState<WorkGraph | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +130,13 @@ export function Plans({ onSelect }: { onSelect: (id: string) => void }) {
     () => flatten((graph?.nodes ?? []).filter((n) => n.kind !== 'milestone' || n.title)),
     [graph],
   );
+  const folderOf = (node: WorkNode) =>
+    graph?.repo_bindings.find((b) => b.node_id === node.id)?.repo_id ?? '';
+  const setFolder = (node: WorkNode, repoId: string) =>
+    void action(async () => {
+      await rpc('assign_work_node_repos', { node_id: node.id, repo_ids: repoId ? [repoId] : [] });
+      await load();
+    });
   const run = (node: WorkNode) =>
     action(async () => {
       await rpc('run_work_node', {
@@ -90,8 +150,8 @@ export function Plans({ onSelect }: { onSelect: (id: string) => void }) {
   return (
     <>
       <PageHeading
-        title="Plans"
-        description="Break bigger work into steps. Each step runs as its own task and starts with what earlier steps learned."
+        title="Workflows"
+        description="Chain tasks into steps. Each step runs as its own task and starts with what the steps before it learned."
         actions={
           rows.length > 0 && (
             <Button variant="primary" onClick={() => setAdd({ parent: '' })} disabled={!native}>
@@ -103,13 +163,15 @@ export function Plans({ onSelect }: { onSelect: (id: string) => void }) {
       />
       {error ? (
         <Card>
-          <Empty title="Couldn't load plans">{error}</Empty>
+          <Empty title="Couldn't load workflows">{error}</Empty>
         </Card>
       ) : rows.length ? (
         <Card className="overflow-hidden">
           {rows.map(({ node, depth }) => {
             const status = statusInfo(node.status);
             const running = RUNNING.includes(node.status);
+            const repoId = folderOf(node);
+            const repo = store.repos.find((r) => r.id === repoId);
             return (
               <div
                 key={node.id}
@@ -128,6 +190,20 @@ export function Plans({ onSelect }: { onSelect: (id: string) => void }) {
                     <div className="mt-0.5 truncate text-xs text-muted">{node.description}</div>
                   )}
                 </div>
+                <FolderMenu
+                  value={repoId}
+                  onChange={(id) => setFolder(node, id)}
+                  trigger={
+                    <button
+                      disabled={running}
+                      title={repo?.local_path ?? 'Choose the folder this step works in'}
+                      className="hidden h-7 max-w-40 items-center gap-1.5 rounded-md px-2 text-xs text-muted hover:bg-hover hover:text-ink disabled:opacity-50 data-[state=open]:bg-hover sm:flex"
+                    >
+                      <FolderGit2 size={13} className="shrink-0" />
+                      <span className="truncate">{repo?.name ?? 'No folder'}</span>
+                    </button>
+                  }
+                />
                 {node.primary_agent && <ProviderLogo agent={node.primary_agent} size={14} />}
                 {node.thread_id && (
                   <Button size="sm" onClick={() => onSelect(node.thread_id!)}>
@@ -169,7 +245,7 @@ export function Plans({ onSelect }: { onSelect: (id: string) => void }) {
                   <MenuContent align="end" className="w-52">
                     <MenuItem onSelect={() => setAdd({ parent: node.id })}>
                       <CornerDownRight size={14} className="text-muted" />
-                      Add a step under this
+                      Add a step after this
                     </MenuItem>
                     <MenuSeparator />
                     <MenuItem danger onSelect={() => setRemove(node)}>
@@ -185,8 +261,8 @@ export function Plans({ onSelect }: { onSelect: (id: string) => void }) {
       ) : (
         <Card>
           <Empty
-            icon={<ListTree size={26} strokeWidth={1.5} />}
-            title={graph || !native ? 'No plans yet' : 'Loading…'}
+            icon={<Workflow size={26} strokeWidth={1.5} />}
+            title={graph || !native ? 'No workflows yet' : 'Loading…'}
             action={
               (graph || !native) && (
                 <Button variant="primary" onClick={() => setAdd({ parent: '' })} disabled={!native}>
@@ -197,7 +273,7 @@ export function Plans({ onSelect }: { onSelect: (id: string) => void }) {
             }
           >
             {(graph || !native) &&
-              'Tasks you start also appear here, so you can organize follow-up steps beneath them.'}
+              'Tasks you start appear here too, so you can add the steps that follow them.'}
           </Empty>
         </Card>
       )}
@@ -215,7 +291,7 @@ export function Plans({ onSelect }: { onSelect: (id: string) => void }) {
         description={
           remove?.thread_id
             ? 'Its task and conversation will be deleted too.'
-            : 'This step will be removed from the plan.'
+            : 'The step will be removed from the workflow.'
         }
         confirmLabel="Delete"
         danger
@@ -259,6 +335,7 @@ function AddStep({
       setRepo(store.repos.length === 1 ? store.repos[0].id : '');
     }
   }, [open, initialParent]);
+  const chosen = store.repos.find((r) => r.id === repo);
   const create = async () => {
     if (!title.trim()) return;
     setBusy(true);
@@ -317,11 +394,11 @@ function AddStep({
           />
         </label>
         <label className="grid gap-1.5 text-[13px]">
-          What should it do?
+          Instructions
           <textarea
             className="field resize-none"
             rows={4}
-            placeholder="Describe the outcome you want and anything the agent should know."
+            placeholder="What should this step get done?"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -337,22 +414,29 @@ function AddStep({
               ))}
             </Select>
           </label>
-          <label className="grid gap-1.5 text-[13px]">
-            Project
-            <Select value={repo} onChange={(e) => setRepo(e.target.value)}>
-              <option value="">None</option>
-              {store.repos.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </Select>
-          </label>
+          <div className="grid gap-1.5 text-[13px]">
+            Folder
+            <FolderMenu
+              value={repo}
+              onChange={setRepo}
+              trigger={
+                <button
+                  type="button"
+                  title={chosen?.local_path ?? undefined}
+                  className="flex h-8 min-w-0 items-center gap-2 rounded-lg border border-line bg-elevated px-3 text-left text-[13px] hover:bg-hover data-[state=open]:border-muted"
+                >
+                  <FolderGit2 size={14} className="shrink-0 text-muted" />
+                  <span className="min-w-0 flex-1 truncate">{chosen?.name ?? 'No folder'}</span>
+                  <ChevronDown size={14} className="shrink-0 text-muted" />
+                </button>
+              }
+            />
+          </div>
         </div>
         <label className="grid gap-1.5 text-[13px]">
-          Comes after
+          Runs after
           <Select value={parent} onChange={(e) => setParent(e.target.value)}>
-            <option value="">Nothing — a new plan</option>
+            <option value="">Nothing (starts a new workflow)</option>
             {nodes.map((n) => (
               <option key={n.id} value={n.id}>
                 {n.title || 'Untitled step'}

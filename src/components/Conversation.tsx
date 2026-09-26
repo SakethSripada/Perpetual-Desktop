@@ -542,7 +542,7 @@ function ThreadBar({
         title="Delete this task?"
         description={
           running
-            ? 'The task is still running. It will be stopped, and its conversation deleted.'
+            ? 'This task is still running. Deleting it stops the task and removes its conversation.'
             : 'Its conversation and history will be deleted. Changes already applied to your projects stay.'
         }
         confirmLabel={running ? 'Stop and delete' : 'Delete'}
