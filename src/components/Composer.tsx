@@ -117,6 +117,14 @@ export function Composer({
     !!thread &&
     ['running', 'running_in_cloud', 'awaiting_approval', 'queued'].includes(thread.status);
   const account = activeAccount(store.accounts, agent);
+  // A new task starts on a provider that can run it, unless the person picks one.
+  const picked = useRef(!!thread);
+  useEffect(() => {
+    if (picked.current || !store.accounts.length) return;
+    picked.current = true;
+    const other = PROVIDERS.find((p) => p !== agent);
+    if (!account && other && activeAccount(store.accounts, other)) setAgent(other);
+  }, [store.accounts]);
   const providerAccounts = store.accounts.filter((a) => a.agent === agent);
   const managed = providerAccounts.length > 0;
   const allLimited =
@@ -154,6 +162,7 @@ export function Composer({
   }, [text]);
 
   const chooseAgent = (next: AgentKind) => {
+    picked.current = true;
     setAgent(next);
     setModel('');
     setReasoning('');

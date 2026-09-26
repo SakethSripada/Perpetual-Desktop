@@ -404,6 +404,13 @@ function ThreadBar({
   const activeCloud = cloudRuns.some((r) =>
     ['provisioning', 'running', 'stalled'].includes(r.status),
   );
+  const [cloudEnabled, setCloudEnabled] = useState(false);
+  useEffect(() => {
+    if (native)
+      rpc<{ enabled: boolean }>('get_cloud_policy')
+        .then((policy) => setCloudEnabled(policy.enabled))
+        .catch(() => setCloudEnabled(false));
+  }, []);
   return (
     <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-line/40 px-4 text-xs">
       <span className="flex items-center gap-2 text-muted">
@@ -457,18 +464,20 @@ function ThreadBar({
               Bring back from cloud
             </MenuItem>
           ) : (
-            <MenuItem
-              disabled={running}
-              onSelect={() =>
-                void action(async () => {
-                  await rpc('launch_cloud_handoff', { thread_id: thread.id, agent: null });
-                  await store.refresh();
-                }, 'Continuing in the cloud')
-              }
-            >
-              <Cloud size={14} className="text-muted" />
-              Continue in cloud
-            </MenuItem>
+            cloudEnabled && (
+              <MenuItem
+                disabled={running}
+                onSelect={() =>
+                  void action(async () => {
+                    await rpc('launch_cloud_handoff', { thread_id: thread.id, agent: null });
+                    await store.refresh();
+                  }, 'Continuing in the cloud')
+                }
+              >
+                <Cloud size={14} className="text-muted" />
+                Continue in cloud
+              </MenuItem>
+            )
           )}
           <MenuSeparator />
           <MenuItem danger onSelect={() => setRemove(true)}>

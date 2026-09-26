@@ -137,11 +137,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(
     async (target: { accountId: string } | { agent: AgentKind }) => {
       try {
-        const accountId =
-          'accountId' in target
-            ? target.accountId
-            : await rpc<string>('add_system_provider_account', { agent: target.agent });
-        await launchSignIn(accountId);
+        if ('agent' in target) {
+          // Reuse the CLI's own sign-in when it already has one.
+          const id = await rpc<string>('add_system_provider_account', { agent: target.agent });
+          const statuses = await rpc<ProviderAccountStatus[]>('provider_account_statuses');
+          const existing = statuses.find((a) => a.id === id);
+          if (existing?.authenticated) {
+            await refresh();
+            toast.success(
+              `Using your ${agentName(target.agent)} sign-in: ${accountName(existing)}`,
+            );
+            return;
+          }
+          await launchSignIn(id);
+        } else {
+          await launchSignIn(target.accountId);
+        }
         await refresh();
       } catch (err) {
         toast.error(errorMessage(err));
