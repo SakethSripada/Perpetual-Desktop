@@ -2944,7 +2944,7 @@ fn git_diff_args(prefix: &[&str], exclude_paths: &[&str], include_pathspec: bool
 }
 
 fn git_read(repo: &Path, args: &[String]) -> Result<String, CoreError> {
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -3048,7 +3048,7 @@ fn delete_managed_branch(repo: &Path, branch: Option<&str>) -> Result<(), CoreEr
     if !branch.starts_with("am/thread-") {
         return Ok(());
     }
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(repo)
         .args(["branch", "-D", branch])

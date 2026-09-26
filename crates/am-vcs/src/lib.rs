@@ -52,7 +52,7 @@ pub struct RepoInfo {
 /// Uses an argument array — never a shell — so user-supplied values cannot be
 /// interpreted as commands.
 fn git(cwd: &Path, args: &[&str]) -> Result<String, VcsError> {
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(cwd)
         .args(args)
@@ -76,7 +76,7 @@ fn git_owned_raw(cwd: &Path, args: &[String]) -> Result<String, VcsError> {
 }
 
 fn git_owned_output(cwd: &Path, args: &[String]) -> Result<Vec<u8>, VcsError> {
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(cwd)
         .args(args)
@@ -125,6 +125,7 @@ pub fn clone_repo(
     }
 
     let mut command = Command::new("git");
+    am_proto::hide_console(&mut command);
     command
         .env("GIT_TERMINAL_PROMPT", "0")
         .arg("clone")
@@ -229,7 +230,7 @@ pub fn create_clone_workspace(
         std::fs::create_dir_all(parent).map_err(|e| VcsError::Io(e.to_string()))?;
     }
 
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("clone")
         .arg("--no-hardlinks")
         .arg("--")
@@ -283,7 +284,7 @@ pub fn commit_all_with_excludes(
         return Ok(None);
     }
 
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(repo)
         .arg("-c")
@@ -312,7 +313,7 @@ pub fn dirty_paths(repo: &Path, paths: &[String]) -> Result<Vec<String>, VcsErro
     }
     let mut dirty = Vec::new();
     for path in paths {
-        let output = Command::new("git")
+        let output = am_proto::hide_console(&mut Command::new("git"))
             .arg("-C")
             .arg(repo)
             .arg("status")
@@ -400,7 +401,7 @@ pub fn overwrite_patch_paths(
     }
     std::fs::create_dir_all(backup_dir).map_err(|err| VcsError::Io(err.to_string()))?;
 
-    let output = Command::new("git")
+    let output = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(repo)
         .arg("worktree")
@@ -450,7 +451,7 @@ pub fn overwrite_patch_paths(
         Ok(())
     })();
 
-    let cleanup = Command::new("git")
+    let cleanup = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(repo)
         .arg("worktree")
@@ -541,7 +542,7 @@ fn run_apply_patch(repo: &Path, patch: &str, check_only: bool) -> Result<(), Vcs
     if patch.trim().is_empty() {
         return Ok(());
     }
-    let mut child = Command::new("git")
+    let mut child = am_proto::hide_console(&mut Command::new("git"))
         .arg("-C")
         .arg(repo)
         .arg("apply")
@@ -573,6 +574,7 @@ fn run_apply_patch(repo: &Path, patch: &str, check_only: bool) -> Result<(), Vcs
 pub fn push_branch(repo: &Path, branch: &str, auth_header: Option<&str>) -> Result<(), VcsError> {
     let refspec = format!("HEAD:refs/heads/{branch}");
     let mut command = Command::new("git");
+    am_proto::hide_console(&mut command);
     command
         .arg("-C")
         .arg(repo)
@@ -606,6 +608,7 @@ pub fn remote_branch_sha(
 ) -> Result<Option<String>, VcsError> {
     let refspec = format!("refs/heads/{branch}");
     let mut command = Command::new("git");
+    am_proto::hide_console(&mut command);
     command
         .arg("-C")
         .arg(repo)
@@ -630,6 +633,7 @@ pub fn remote_branch_sha(
 /// Fetch `origin/<branch>` into the repo.
 pub fn fetch_branch(repo: &Path, branch: &str, auth_header: Option<&str>) -> Result<(), VcsError> {
     let mut command = Command::new("git");
+    am_proto::hide_console(&mut command);
     command
         .arg("-C")
         .arg(repo)
@@ -751,7 +755,7 @@ mod apply_tests {
     }
 
     fn run(repo: &Path, args: &[&str]) {
-        let output = Command::new("git")
+        let output = am_proto::hide_console(&mut Command::new("git"))
             .arg("-C")
             .arg(repo)
             .args(args)

@@ -144,7 +144,7 @@ impl AgentAdapter for CodexAdapter {
 }
 
 fn codex_authenticated(binary: &Path) -> bool {
-    let output = Command::new(binary)
+    let output = am_proto::hide_console(&mut Command::new(binary))
         .args(["login", "status"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

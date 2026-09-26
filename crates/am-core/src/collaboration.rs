@@ -1038,7 +1038,7 @@ mod tests {
     use std::process::Command;
 
     fn git(repo: &std::path::Path, args: &[&str]) {
-        let output = Command::new("git")
+        let output = am_proto::hide_console(&mut Command::new("git"))
             .arg("-C")
             .arg(repo)
             .args(args)

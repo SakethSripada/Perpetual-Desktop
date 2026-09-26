@@ -1893,7 +1893,7 @@ fn codex_app_server_models(
 ) -> Result<(Vec<AgentModelOption>, Vec<String>), String> {
     use std::io::{BufRead, BufReader, Write};
 
-    let mut child = Command::new(binary)
+    let mut child = am_proto::hide_console(&mut Command::new(binary))
         .arg("app-server")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -2243,7 +2243,7 @@ fn command_output_timeout(
     args: &[&str],
     timeout: Duration,
 ) -> Result<String, String> {
-    let mut child = Command::new(binary)
+    let mut child = am_proto::hide_console(&mut Command::new(binary))
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

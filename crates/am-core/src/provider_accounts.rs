@@ -334,6 +334,7 @@ impl AppCore {
             &["auth", "status", "--json"]
         };
         let mut command = Command::new(binary);
+        am_proto::hide_console(&mut command);
         command
             .args(args)
             .stdin(Stdio::null())
@@ -529,6 +530,7 @@ fn consume_codex_reset_credit(env: &[(String, String)]) -> Result<bool, CoreErro
     let binary = am_agents::find_binary("codex")
         .ok_or_else(|| CoreError::Other("Codex CLI is not installed".into()))?;
     let mut command = Command::new(binary);
+    am_proto::hide_console(&mut command);
     command
         .arg("app-server")
         .stdin(Stdio::piped())

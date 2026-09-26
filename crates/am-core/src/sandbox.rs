@@ -219,7 +219,9 @@ impl AppCore {
             .await
             .ok();
 
-        let mut child = tokio::process::Command::new(&binary)
+        let mut command = tokio::process::Command::new(&binary);
+        am_proto::hide_console(command.as_std_mut());
+        let mut child = command
             .arg("login")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -292,7 +294,9 @@ impl AppCore {
             .await
             .ok();
 
-        let mut child = tokio::process::Command::new(&binary)
+        let mut command = tokio::process::Command::new(&binary);
+        am_proto::hide_console(command.as_std_mut());
+        let mut child = command
             .args(["secret", "set", "-g", "openai", "--oauth"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -470,7 +474,7 @@ pub(crate) fn reconcile_owned_sandboxes() {
     let Some(binary) = find_binary("sbx") else {
         return;
     };
-    let Ok(output) = Command::new(&binary)
+    let Ok(output) = am_proto::hide_console(&mut Command::new(&binary))
         .args(["ls", "--quiet"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -483,7 +487,7 @@ pub(crate) fn reconcile_owned_sandboxes() {
         return;
     }
     for name in parse_owned_sandbox_names(&output.stdout) {
-        let _ = Command::new(&binary)
+        let _ = am_proto::hide_console(&mut Command::new(&binary))
             .args(["rm", "--force", &name])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -517,7 +521,7 @@ async fn cleanup_sandbox_names(names: Vec<String>) {
 fn remove_named_sandbox(binary: &std::path::Path, name: &str) {
     let commands: &[&[&str]] = &[&["rm", "--force"], &["rm", "-f"], &["rm"], &["stop"]];
     for prefix in commands {
-        let status = Command::new(binary)
+        let status = am_proto::hide_console(&mut Command::new(binary))
             .args(*prefix)
             .arg(name)
             .stdin(Stdio::null())
@@ -570,6 +574,7 @@ fn ensure_sbx_daemon(binary: &std::path::Path) {
         return;
     }
     let mut cmd = Command::new(binary);
+    am_proto::hide_console(&mut cmd);
     cmd.args(["daemon", "start"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -624,7 +629,7 @@ fn open_url(url: &str) {
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     let program = "xdg-open";
 
-    let _ = Command::new(program)
+    let _ = am_proto::hide_console(&mut Command::new(program))
         .arg(url)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -634,7 +639,7 @@ fn open_url(url: &str) {
 
 /// `sbx daemon status` exits 0 whether running or stopped, so parse its output.
 fn sbx_daemon_running(binary: &std::path::Path) -> bool {
-    let output = Command::new(binary)
+    let output = am_proto::hide_console(&mut Command::new(binary))
         .args(["daemon", "status"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -647,7 +652,7 @@ fn sbx_daemon_running(binary: &std::path::Path) -> bool {
 /// but no Docker session exists; there is no `sbx auth` subcommand.
 fn sbx_authenticated(binary: &std::path::Path) -> bool {
     matches!(
-        Command::new(binary)
+        am_proto::hide_console(&mut Command::new(binary))
             .args(["ls", "--quiet"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -658,7 +663,7 @@ fn sbx_authenticated(binary: &std::path::Path) -> bool {
 }
 
 fn codex_sandbox_authenticated(binary: &std::path::Path) -> bool {
-    let output = Command::new(binary)
+    let output = am_proto::hide_console(&mut Command::new(binary))
         .args(["secret", "ls", "-g", "--service", "openai"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
