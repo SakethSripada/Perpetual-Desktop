@@ -9,14 +9,10 @@ import {
   Check,
   Terminal,
   ShieldAlert,
-  FileDiff,
-  ChevronRight,
   CircleAlert,
   RefreshCw,
   Clock,
   ListOrdered,
-  CircleX,
-  Wrench,
   ExternalLink,
 } from 'lucide-react';
 import Markdown from 'react-markdown';
@@ -24,10 +20,10 @@ import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Queue } from './Queue';
-import { Questions } from './Questions';
+import { LoadingState, QuestionCard, ToolRun } from './ai';
 import { Review } from './Review';
 import { Composer, type RunOptions } from './Composer';
-import { questionsFromEvent } from '../lib/userQuestions';
+import { formatQuestionAnswers, questionsFromEvent } from '../lib/userQuestions';
 import { activeAccount, useStore } from '../lib/store';
 import { action, native, rpc } from '../lib/api';
 import { buildTranscriptItems, type TranscriptItem, type TransitionIcon } from '../lib/transcript';
@@ -39,7 +35,6 @@ import {
   errorMessage,
   providerName,
   resetTime,
-  shellCommand,
   statusInfo,
 } from '../lib/format';
 import type {
@@ -268,6 +263,9 @@ export function Conversation({
 
   const running = LIVE.includes(thread.status);
   const lastGroupOpen = running;
+  const lastAsk = [...events].reverse().find((e) => e.role === 'user');
+  const runStart =
+    (lastAsk && Date.parse(lastAsk.ts)) || Date.parse(thread.updated_at) || Date.now();
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -296,6 +294,7 @@ export function Conversation({
                 'codex'
               }
               openLast={lastGroupOpen}
+              onOpenFiles={() => setReview(true)}
               onEdit={fill}
               onAnswer={async (text) => {
                 await rpc('send_thread_message', {
@@ -313,7 +312,7 @@ export function Conversation({
                 {thread.status === 'draft' ? 'Send a message to start.' : 'Starting…'}
               </p>
             )}
-            {running && items.length > 0 && <Working thread={thread} />}
+            {running && items.length > 0 && <Working thread={thread} since={runStart} />}
             <div ref={bottom} />
           </div>
         </div>
@@ -559,7 +558,7 @@ function ThreadBar({
   );
 }
 
-function Working({ thread }: { thread: AgentThread }) {
+function Working({ thread, since }: { thread: AgentThread; since: number }) {
   const label =
     thread.status === 'awaiting_approval'
       ? 'Waiting for your approval'
@@ -569,17 +568,8 @@ function Working({ thread }: { thread: AgentThread }) {
           ? 'Working in the cloud'
           : 'Working';
   return (
-    <div className="mt-2 flex items-center gap-2 text-xs text-muted">
-      <span className="flex gap-1">
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted"
-            style={{ animationDelay: `${i * 180}ms` }}
-          />
-        ))}
-      </span>
-      {label}
+    <div className="mt-3">
+      <LoadingState label={label} since={since} />
     </div>
   );
 }
@@ -608,12 +598,14 @@ function Transcript({
   items,
   agentFor,
   openLast,
+  onOpenFiles,
   onEdit,
   onAnswer,
 }: {
   items: TranscriptItem[];
   agentFor: (event: AgentThreadEvent) => AgentKind;
   openLast: boolean;
+  onOpenFiles: () => void;
   onEdit: (text: string) => void;
   onAnswer: (text: string) => Promise<void>;
 }) {
@@ -622,16 +614,22 @@ function Transcript({
     <>
       {blocks.map((block, index) =>
         block.kind === 'steps' ? (
-          <Steps
+          <ToolRun
             key={block.id}
             events={block.events}
-            defaultOpen={openLast && index === blocks.length - 1}
+            live={openLast && index === blocks.length - 1}
+            onOpenFiles={onOpenFiles}
           />
         ) : block.item.type === 'event' ? (
           <EventMessage
             key={block.item.event.id}
             event={block.item.event}
             agent={agentFor(block.item.event)}
+            answered={blocks
+              .slice(index + 1)
+              .some(
+                (b) => b.kind === 'item' && b.item.type === 'event' && b.item.event.role === 'user',
+              )}
             onEdit={onEdit}
             onAnswer={onAnswer}
           />
@@ -675,134 +673,36 @@ function Transition({ item }: { item: Extract<TranscriptItem, { type: 'transitio
   );
 }
 
-function stepSummary(event: AgentThreadEvent): {
-  label: string;
-  detail: string | null;
-  failed?: boolean;
-} {
-  const data = (event.data ?? {}) as Record<string, unknown>;
-  if (event.kind === 'file_changed') return { label: event.text || 'Changed a file', detail: null };
-  if (event.kind === 'tool_result') {
-    const ok = data.ok !== false;
-    const text = String(data.summary ?? event.text ?? '').trim();
-    return { label: ok ? 'Result' : 'Failed', detail: text || null, failed: !ok };
-  }
-  const input = (data.input ?? {}) as Record<string, unknown>;
-  const raw = Array.isArray(input.command)
-    ? input.command.join(' ')
-    : typeof input.command === 'string'
-      ? input.command
-      : null;
-  const command = raw ? shellCommand(raw) : null;
-  const target =
-    command ??
-    ['file_path', 'path', 'pattern', 'url', 'query', 'description']
-      .map((k) => input[k])
-      .find((v): v is string => typeof v === 'string' && !!v.trim()) ??
-    null;
-  return { label: event.text || 'Tool', detail: target };
-}
-
-function Steps({ events, defaultOpen }: { events: AgentThreadEvent[]; defaultOpen: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
-  useEffect(() => setOpen(defaultOpen), [defaultOpen]);
-  const calls = events.filter((e) => e.kind !== 'tool_result');
-  const files = events.filter((e) => e.kind === 'file_changed').length;
-  const failed = events.some(
-    (e) => e.kind === 'tool_result' && (e.data as { ok?: boolean })?.ok === false,
-  );
-  const parts = [
-    calls.length - files > 0 &&
-      `${calls.length - files} ${calls.length - files === 1 ? 'step' : 'steps'}`,
-    files > 0 && `${files} ${files === 1 ? 'file' : 'files'} changed`,
-  ].filter(Boolean);
-  const last = calls[calls.length - 1];
-  return (
-    <div className="my-3">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex max-w-full items-center gap-1.5 rounded-md py-1 text-xs text-muted hover:text-ink"
-      >
-        <ChevronRight
-          size={13}
-          className={cn('shrink-0 transition-transform', open && 'rotate-90')}
-        />
-        <Wrench size={12} className="shrink-0" />
-        <span className="shrink-0">{parts.join(', ') || 'Worked'}</span>
-        {failed && <CircleX size={12} className="shrink-0 text-danger" />}
-        {!open && last && (
-          <span className="truncate text-faint">
-            · {stepSummary(last).detail || stepSummary(last).label}
-          </span>
-        )}
-      </button>
-      {open && (
-        <div className="mt-1 ml-[7px] space-y-0.5 border-l border-line pl-4">
-          {events.map((event) => (
-            <Step key={event.id} event={event} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Step({ event }: { event: AgentThreadEvent }) {
-  const [open, setOpen] = useState(false);
-  const { label, detail, failed } = stepSummary(event);
-  const isFile = event.kind === 'file_changed';
-  const isResult = event.kind === 'tool_result';
-  const full = isResult
-    ? detail
-    : JSON.stringify((event.data as { input?: unknown })?.input ?? event.data, null, 2);
-  const expandable = !isFile && !!full && full !== '{}' && full !== 'null';
-  return (
-    <div className="text-xs">
-      <button
-        disabled={!expandable}
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full min-w-0 items-center gap-2 rounded py-1 text-left text-muted enabled:hover:text-ink"
-      >
-        {isFile ? (
-          <FileDiff size={12} className="shrink-0" />
-        ) : isResult ? (
-          failed ? (
-            <CircleX size={12} className="shrink-0 text-danger" />
-          ) : (
-            <Check size={12} className="shrink-0 text-success" />
-          )
-        ) : (
-          <Terminal size={12} className="shrink-0" />
-        )}
-        <span className={cn('shrink-0', !isResult && 'text-ink/85')}>
-          {isResult ? (failed ? 'Failed' : 'Done') : label}
-        </span>
-        {detail && (
-          <span className="truncate font-mono text-[11px] text-faint">{detail.split('\n')[0]}</span>
-        )}
-      </button>
-      {open && full && (
-        <pre className="mt-1 mb-2 max-h-72 overflow-auto rounded-lg border border-line bg-sidebar p-3 font-mono text-[11px] leading-5 whitespace-pre-wrap text-muted">
-          {full}
-        </pre>
-      )}
-    </div>
-  );
-}
-
 function EventMessage({
   event,
   agent,
+  answered,
   onEdit,
   onAnswer,
 }: {
   event: AgentThreadEvent;
   agent: AgentKind;
+  answered: boolean;
   onEdit: (text: string) => void;
   onAnswer: (text: string) => Promise<void>;
 }) {
   const [copied, setCopied] = useState(false);
-  if (questionsFromEvent(event).length) return <Questions event={event} onAnswer={onAnswer} />;
+  const questions = questionsFromEvent(event);
+  if (questions.length)
+    return (
+      <QuestionCard
+        questions={questions}
+        answered={answered}
+        onSubmit={async (answers) => {
+          try {
+            await onAnswer(formatQuestionAnswers(questions, answers));
+          } catch (error) {
+            toast.error(errorMessage(error));
+            throw error;
+          }
+        }}
+      />
+    );
   if (event.kind === 'error')
     return (
       <div className="my-4 flex items-start gap-2.5 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-[13px]">
@@ -818,41 +718,39 @@ function EventMessage({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
+  const actions = (
+    <span className="flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+      <MessageAction label={copied ? 'Copied' : 'Copy'} onClick={copy}>
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+      </MessageAction>
+      {event.role === 'user' && (
+        <MessageAction label="Edit as new message" onClick={() => onEdit(event.text || '')}>
+          <Pencil size={13} />
+        </MessageAction>
+      )}
+    </span>
+  );
+  // Actions sit beside the message, so they never add a line of their own.
   if (event.role === 'user')
     return (
-      <article className="group mt-6 mb-6 flex flex-col items-end first:mt-0">
+      <article className="group mt-6 mb-6 flex items-end justify-end gap-1 first:mt-0">
+        {actions}
         <div className="max-w-[85%] rounded-2xl bg-hover px-4 py-2.5 text-[14px] leading-6 whitespace-pre-wrap break-words selectable">
           {event.text}
-        </div>
-        <div className="mt-1 flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-          <MessageAction label={copied ? 'Copied' : 'Copy'} onClick={copy}>
-            {copied ? <Check size={13} /> : <Copy size={13} />}
-          </MessageAction>
-          <MessageAction label="Edit as new message" onClick={() => onEdit(event.text || '')}>
-            <Pencil size={13} />
-          </MessageAction>
         </div>
       </article>
     );
   return (
     <article className="group my-4">
-      <div className="mb-1.5 flex items-center gap-2 text-xs font-medium text-muted">
+      <div className="mb-1.5 flex h-6 items-center gap-2 text-xs font-medium text-muted">
         <ProviderLogo agent={agent} size={14} />
         {agentName(agent)}
+        {!streaming && <span className="ml-1">{actions}</span>}
       </div>
       <div className="prose-chat">
         <Markdown remarkPlugins={[remarkGfm]}>{event.text || ''}</Markdown>
-        {streaming && (
-          <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-muted align-text-bottom" />
-        )}
+        {streaming && <span className="stream-caret" />}
       </div>
-      {!streaming && (
-        <div className="mt-1 flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-          <MessageAction label={copied ? 'Copied' : 'Copy'} onClick={copy}>
-            {copied ? <Check size={13} /> : <Copy size={13} />}
-          </MessageAction>
-        </div>
-      )}
     </article>
   );
 }
@@ -871,7 +769,7 @@ function MessageAction({
       <button
         aria-label={label}
         onClick={onClick}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-faint hover:bg-hover hover:text-ink"
+        className="flex h-6 w-6 items-center justify-center rounded-md text-faint hover:bg-hover hover:text-ink"
       >
         {children}
       </button>
@@ -902,54 +800,70 @@ function ApprovalCard({ approval }: { approval: ApprovalRequest }) {
       : approval.kind === 'file_change'
         ? 'change files'
         : `use ${approval.tool_name}`;
+  const pill = (tone: 'primary' | 'quiet') =>
+    cn(
+      'inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-medium transition-colors disabled:opacity-40',
+      tone === 'primary'
+        ? 'bg-ink text-surface hover:bg-ink/85'
+        : 'text-muted hover:bg-hover hover:text-ink',
+    );
+  const busy = pending !== null;
   return (
-    <div className="mb-3 animate-pop-in rounded-2xl border border-warning/35 bg-elevated p-4 shadow-[0_8px_30px_-22px_rgba(0,0,0,0.5)]">
-      <div className="flex items-center gap-2 text-[13px] font-medium">
-        <ShieldAlert size={15} className="text-warning" />
-        {agentName(approval.agent)} wants to {what}
+    <div
+      className="mb-3 overflow-hidden rounded-2xl border border-line bg-elevated shadow-[0_10px_40px_-24px_rgba(0,0,0,0.55)]"
+      style={{ animation: 'fade-up 380ms cubic-bezier(0.23, 1, 0.32, 1) both' }}
+    >
+      <div className="px-4 pt-3.5 pb-3">
+        <div className="flex items-center gap-2 text-[13.5px] font-medium">
+          <span className="flex size-5 items-center justify-center rounded-full bg-warning/15 text-warning">
+            <ShieldAlert size={12} />
+          </span>
+          {agentName(approval.agent)} wants to {what}
+        </div>
+        {detail && (
+          <pre className="mt-2.5 max-h-40 overflow-auto rounded-lg bg-sidebar px-3 py-2 font-mono text-xs leading-5 whitespace-pre-wrap break-all selectable">
+            {detail}
+          </pre>
+        )}
+        {approval.cwd && (
+          <p className="mt-1.5 truncate font-mono text-[11px] text-faint">in {approval.cwd}</p>
+        )}
+        {approval.reason && <p className="mt-2 text-xs leading-5 text-muted">{approval.reason}</p>}
       </div>
-      {detail && (
-        <pre className="mt-2.5 max-h-40 overflow-auto rounded-lg bg-sidebar px-3 py-2 font-mono text-xs leading-5 whitespace-pre-wrap break-all selectable">
-          {detail}
-        </pre>
-      )}
-      {approval.cwd && (
-        <p className="mt-1.5 truncate font-mono text-[11px] text-faint">in {approval.cwd}</p>
-      )}
-      {approval.reason && <p className="mt-2 text-xs leading-5 text-muted">{approval.reason}</p>}
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          variant="primary"
-          loading={pending === 'allow'}
-          onClick={() => decide('allow')}
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-line/70 px-3 py-2.5">
+        <button
+          type="button"
+          disabled={busy}
+          className={pill('quiet')}
+          onClick={() => decide('abort')}
         >
-          Allow
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          loading={pending === 'allow_for_session'}
-          onClick={() => decide('allow_for_session')}
-        >
-          Allow for this task
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          loading={pending === 'deny'}
+          {pending === 'abort' ? 'Stopping…' : 'Stop task'}
+        </button>
+        <span className="flex-1" />
+        <button
+          type="button"
+          disabled={busy}
+          className={pill('quiet')}
           onClick={() => decide('deny')}
         >
           Deny
-        </Button>
-        <Button
-          size="sm"
-          className="ml-auto"
-          loading={pending === 'abort'}
-          onClick={() => decide('abort')}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          className={pill('quiet')}
+          onClick={() => decide('allow_for_session')}
         >
-          Stop task
-        </Button>
+          Allow for this task
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          className={pill('primary')}
+          onClick={() => decide('allow')}
+        >
+          {pending === 'allow' ? 'Allowing…' : 'Allow'}
+        </button>
       </div>
     </div>
   );

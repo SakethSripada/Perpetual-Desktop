@@ -21,6 +21,7 @@ import { relativeTime, statusInfo } from './lib/format';
 import { isMac, shortcut } from './lib/platform';
 import { Button, Dot, IconButton, Kbd, Modal, PerpetualMark, cn } from './components/ui';
 import { SidebarAccounts } from './components/AccountSwitcher';
+import { LoaderGrid } from './components/ai';
 import { Conversation } from './components/Conversation';
 import { Accounts } from './components/Accounts';
 import { Settings } from './components/Settings';
@@ -207,7 +208,11 @@ export default function App() {
                   )}
                 >
                   <span className="min-w-0 flex-1 truncate">{t.title || 'Untitled task'}</span>
-                  {flagged && <Dot tone={status.tone} live={status.live} />}
+                  {status.tone === 'accent' && status.live ? (
+                    <LoaderGrid size={3} />
+                  ) : (
+                    flagged && <Dot tone={status.tone} live={status.live} />
+                  )}
                 </button>
               );
             })}

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { commandPrompt, parseCommand } from './commands';
 import { questionsFromEvent, formatQuestionAnswers } from './userQuestions';
 import { buildTranscriptItems } from './transcript';
+import { toolRun } from '../components/ai';
 import { accountDetail, accountName, accountState, shellCommand } from './format';
 import type { AgentThreadEvent, ProviderAccountStatus } from './types';
 const event = (patch: Partial<AgentThreadEvent>): AgentThreadEvent => ({
@@ -149,5 +150,33 @@ describe('tool steps', () => {
     ).toBe('Get-Content -LiteralPath AGENTS.md');
     expect(shellCommand("bash -lc 'npm test'")).toBe('npm test');
     expect(shellCommand('git status')).toBe('git status');
+  });
+});
+describe('tool runs', () => {
+  it('pairs results with their calls by id, even out of order', () => {
+    const { steps } = toolRun([
+      event({
+        id: 'a',
+        kind: 'tool_use',
+        text: 'Command',
+        data: { call_id: '1', input: { command: 'ls' } },
+      }),
+      event({
+        id: 'b',
+        kind: 'tool_use',
+        text: 'Command',
+        data: { call_id: '2', input: { command: 'rg x' } },
+      }),
+      event({
+        id: 'c',
+        kind: 'tool_result',
+        data: { call_id: '2', ok: false, summary: 'rg: not found' },
+      }),
+      event({ id: 'd', kind: 'tool_result', data: { call_id: '1', ok: true, summary: 'a.txt' } }),
+    ]);
+    expect(steps.map((s) => [s.chip, s.failed, s.detail[0]])).toEqual([
+      ['ls', false, 'a.txt'],
+      ['rg x', true, 'rg: not found'],
+    ]);
   });
 });

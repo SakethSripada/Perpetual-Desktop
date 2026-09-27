@@ -4,6 +4,7 @@ Original project: https://github.com/SakethSripada/Perpetual
 UI primitives: Radix UI (MIT), https://www.radix-ui.com/primitives
 Styling: Tailwind CSS (MIT), https://tailwindcss.com
 Interface icons: Lucide (ISC), https://lucide.dev
+Agent activity components (loader, tool run, question card): adapted from Beautiful UI (MIT), Copyright (c) 2026 Shane Levine, https://www.beautifului.dev. Full license in licenses/beautiful-ui.txt.
 Provider marks: LobeHub Icons (MIT), https://github.com/lobehub/lobe-icons
 OpenAI mark is displayed in white; Claude uses the upstream color asset.
 Provider names and logos are trademarks of their respective owners; no endorsement is implied.

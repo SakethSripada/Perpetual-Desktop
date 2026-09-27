@@ -19,6 +19,7 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
+  --color-switch: var(--switch);
   --animate-fade-in: fade-in 120ms ease-out;
   --animate-pop-in: pop-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
   @keyframes fade-in {
@@ -48,6 +49,7 @@
   --success: #86c79f;
   --warning: #e3b96f;
   --danger: #ec8b80;
+  --switch: #2f9e5b;
 }
 :root[data-theme='light'] {
   color-scheme: light;
@@ -64,6 +66,7 @@
   --success: #2c8052;
   --warning: #9a6410;
   --danger: #bf3b2f;
+  --switch: #1f8a4c;
 }
 @layer base {
   * {
@@ -188,5 +191,73 @@
   }
   & hr {
     @apply my-6 border-line;
+  }
+}
+
+/* Agent activity motion. Adapted from Beautiful UI (MIT, (c) 2026 Shane Levine). */
+@keyframes pixel-on {
+  0%,
+  to {
+    opacity: 0.15;
+  }
+  18%,
+  42% {
+    opacity: 1;
+  }
+  62% {
+    opacity: 0.15;
+  }
+}
+@keyframes shimmer-text {
+  0% {
+    background-position: 150%;
+  }
+  to {
+    background-position: -50%;
+  }
+}
+@keyframes caret-blink {
+  0%,
+  to {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes fade-up {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes bui-pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  border-radius: 1px;
+  background: var(--ink);
+  vertical-align: text-bottom;
+  animation: caret-blink 1s step-end infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pixel-cell,
+  .stream-caret {
+    animation: none !important;
   }
 }
