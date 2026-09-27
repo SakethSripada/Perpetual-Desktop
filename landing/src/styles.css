@@ -13,9 +13,6 @@
   --color-muted: #9d9c97;
   --color-faint: #6c6b67;
   --color-sage: #b2cdbd;
-  --color-accent: #6fdca6;
-  --color-accent-deep: #2f9e6b;
-  --color-teal: #5cc9c2;
   --color-claude: #d97757;
   --color-good: #86c79f;
   --color-warn: #e3b96f;
@@ -35,7 +32,7 @@
     overflow-x: clip;
   }
   ::selection {
-    background: rgb(111 220 166 / 0.3);
+    background: rgb(178 205 189 / 0.3);
   }
   :focus-visible {
     outline: 2px solid var(--color-sage);
@@ -61,24 +58,6 @@
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-}
-/* The one colored phrase in a headline: mint into teal, with a slow sheen. */
-.accent-gradient {
-  background: linear-gradient(100deg, #9ef0c4 0%, #5fd69f 28%, #e6fff1 46%, #5fd69f 62%, #56c8c1 100%);
-  background-size: 220% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: sheen 9s ease-in-out infinite;
-}
-@keyframes sheen {
-  0%,
-  100% {
-    background-position: 100% 0;
-  }
-  50% {
-    background-position: 0% 0;
-  }
 }
 .muted-gradient {
   background: linear-gradient(180deg, #a7aaa6 0%, #5f625f 100%);
