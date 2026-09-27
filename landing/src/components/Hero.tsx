@@ -34,7 +34,7 @@ export function Hero() {
       {/* Light behind the window, and a floor that recedes into it. */}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[1100px]">
         <Aurora className="absolute inset-x-0 top-0 h-[820px] [mask-image:linear-gradient(to_bottom,black_45%,transparent)]" />
-        <div className="absolute top-[420px] left-1/2 h-[520px] w-[1100px] -translate-x-1/2 rounded-[50%] bg-[radial-gradient(closest-side,rgba(178,205,189,0.16),transparent)] blur-2xl" />
+        <div className="absolute top-[420px] left-1/2 h-[520px] w-[1100px] -translate-x-1/2 rounded-[50%] bg-[radial-gradient(closest-side,rgba(110,120,255,0.12),transparent)] blur-2xl" />
         <div className="absolute top-[640px] left-1/2 h-[620px] w-[2200px] -translate-x-1/2 [perspective:900px]">
           <div className="h-full w-full origin-top [transform:rotateX(72deg)] bg-[linear-gradient(rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.06)_1px,transparent_1px)] bg-[size:72px_72px] [mask-image:radial-gradient(ellipse_at_top,black_10%,transparent_65%)]" />
         </div>
@@ -96,7 +96,7 @@ export function Hero() {
           <motion.div
             aria-hidden
             style={{ opacity: glow }}
-            className="absolute -inset-x-10 -bottom-16 top-1/3 -z-10 rounded-[40px] bg-[radial-gradient(closest-side,rgba(178,205,189,0.22),transparent)] blur-3xl"
+            className="absolute -inset-x-10 -bottom-16 top-1/3 -z-10 rounded-[40px] bg-[radial-gradient(closest-side,rgba(110,120,255,0.2),transparent)] blur-3xl"
           />
           <div className="overflow-hidden rounded-[14px] bg-[#1f1f1f] shadow-[0_0_0_1px_rgba(255,255,255,0.09),0_1px_0_0_rgba(255,255,255,0.08)_inset,0_50px_140px_-40px_rgba(0,0,0,0.95)] sm:rounded-[18px]">
             <Video

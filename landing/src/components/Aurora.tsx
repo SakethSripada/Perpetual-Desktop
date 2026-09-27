@@ -5,7 +5,7 @@ attribute vec2 p;
 void main() { gl_Position = vec4(p, 0.0, 1.0); }
 `;
 
-// Slow, domain-warped noise tinted from deep green through teal, lit from the
+// Slow, domain-warped noise tinted from indigo through blue and violet, lit from the
 // top and fading to the page color well before the headline.
 const FRAGMENT = `
 precision highp float;
@@ -32,11 +32,14 @@ void main() {
   vec2 q = vec2(fbm(p + vec2(0.0, s)), fbm(p + vec2(5.2, -s)));
   float n = fbm(p + 1.4 * q + vec2(s * 0.6, 0.0));
 
-  vec3 green = vec3(0.05, 0.78, 0.52);
-  vec3 teal = vec3(0.06, 0.82, 0.74);
-  vec3 deep = vec3(0.02, 0.30, 0.26);
-  vec3 col = mix(deep, green, smoothstep(0.3, 0.7, n));
-  col = mix(col, teal, smoothstep(0.4, 0.8, q.x));
+  // Deep indigo lifting into electric blue, with violet and a cyan edge.
+  vec3 deep = vec3(0.07, 0.08, 0.32);
+  vec3 blue = vec3(0.20, 0.40, 1.00);
+  vec3 violet = vec3(0.52, 0.30, 0.98);
+  vec3 cyan = vec3(0.30, 0.78, 1.00);
+  vec3 col = mix(deep, blue, smoothstep(0.28, 0.72, n));
+  col = mix(col, violet, smoothstep(0.45, 0.85, q.x) * 0.75);
+  col = mix(col, cyan, smoothstep(0.6, 0.95, q.y) * 0.45);
 
   // A bright pool of light up and to the right that drifts and breathes,
   // over a fainter band across the whole top edge.
@@ -126,7 +129,7 @@ export function Aurora({ className = '' }: { className?: string }) {
   return (
     <div
       aria-hidden
-      className={`bg-[radial-gradient(ellipse_80%_60%_at_60%_0%,rgba(22,150,110,0.35),transparent_70%)] ${className}`}
+      className={`bg-[radial-gradient(ellipse_80%_60%_at_60%_0%,rgba(70,90,230,0.35),transparent_70%)] ${className}`}
     >
       <canvas
         ref={canvas}
