@@ -5,7 +5,6 @@ import {
   Play,
   Square,
   Trash2,
-  MoreHorizontal,
   CornerDownRight,
   ArrowUpRight,
   FolderOpen,
@@ -21,6 +20,7 @@ import {
   Button,
   Card,
   Confirm,
+  ContextActions,
   Dot,
   Empty,
   MenuContent,
@@ -32,10 +32,12 @@ import {
   MenuSeparator,
   MenuTrigger,
   Modal,
+  MoreActions,
   PageHeading,
   ProviderLogo,
   Select,
   Tip,
+  type Action,
 } from './ui';
 
 const RUNNING = ['running', 'running_in_cloud', 'awaiting_approval', 'queued'];
@@ -137,6 +139,37 @@ export function Workflows({ onSelect }: { onSelect: (id: string) => void }) {
       await rpc('assign_work_node_repos', { node_id: node.id, repo_ids: repoId ? [repoId] : [] });
       await load();
     });
+  const stop = (node: WorkNode) =>
+    void action(async () => {
+      await rpc('stop_work_node', { node_id: node.id });
+      await load();
+    });
+  const nodeActions = (node: WorkNode): Action[] => {
+    const running = RUNNING.includes(node.status);
+    const runnable = node.kind === 'session' || node.kind === 'task';
+    return [
+      ...(node.thread_id
+        ? [{ label: 'Open task', icon: ArrowUpRight, onSelect: () => onSelect(node.thread_id!) }]
+        : []),
+      ...(running
+        ? [{ label: 'Stop', icon: Square, onSelect: () => stop(node) }]
+        : runnable
+          ? [{ label: 'Run', icon: Play, onSelect: () => void run(node) }]
+          : []),
+      {
+        label: 'Add a step after this',
+        icon: CornerDownRight,
+        onSelect: () => setAdd({ parent: node.id }),
+      },
+      {
+        label: 'Delete',
+        icon: Trash2,
+        danger: true,
+        separated: true,
+        onSelect: () => setRemove(node),
+      },
+    ];
+  };
   const run = (node: WorkNode) =>
     action(async () => {
       await rpc('run_work_node', {
@@ -173,88 +206,60 @@ export function Workflows({ onSelect }: { onSelect: (id: string) => void }) {
             const repoId = folderOf(node);
             const repo = store.repos.find((r) => r.id === repoId);
             return (
-              <div
-                key={node.id}
-                className="group flex min-h-12 items-center gap-3 border-b border-line/60 py-2 pr-3 last:border-0"
-                style={{ paddingLeft: 16 + depth * 22 }}
-              >
-                {depth > 0 && <CornerDownRight size={13} className="-ml-1 shrink-0 text-faint" />}
-                <Tip label={status.label}>
-                  <span className="flex">
-                    <Dot tone={status.tone} live={status.live} />
-                  </span>
-                </Tip>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px]">{node.title || 'Untitled step'}</div>
-                  {node.description && node.description !== node.title && (
-                    <div className="mt-0.5 truncate text-xs text-muted">{node.description}</div>
-                  )}
-                </div>
-                <FolderMenu
-                  value={repoId}
-                  onChange={(id) => setFolder(node, id)}
-                  trigger={
-                    <button
-                      disabled={running}
-                      title={repo?.local_path ?? 'Choose the folder this step works in'}
-                      className="hidden h-7 max-w-40 items-center gap-1.5 rounded-md px-2 text-xs text-muted hover:bg-hover hover:text-ink disabled:opacity-50 data-[state=open]:bg-hover sm:flex"
-                    >
-                      <FolderGit2 size={13} className="shrink-0" />
-                      <span className="truncate">{repo?.name ?? 'No folder'}</span>
-                    </button>
-                  }
-                />
-                {node.primary_agent && <ProviderLogo agent={node.primary_agent} size={14} />}
-                {node.thread_id && (
-                  <Button size="sm" onClick={() => onSelect(node.thread_id!)}>
-                    Open
-                    <ArrowUpRight size={12} />
-                  </Button>
-                )}
-                {running ? (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() =>
-                      void action(async () => {
-                        await rpc('stop_work_node', { node_id: node.id });
-                        await load();
-                      })
+              <ContextActions key={node.id} actions={nodeActions(node)}>
+                <div
+                  className="group flex min-h-12 items-center gap-3 border-b border-line/60 py-2 pr-3 last:border-0"
+                  style={{ paddingLeft: 16 + depth * 22 }}
+                >
+                  {depth > 0 && <CornerDownRight size={13} className="-ml-1 shrink-0 text-faint" />}
+                  <Tip label={status.label}>
+                    <span className="flex">
+                      <Dot tone={status.tone} live={status.live} />
+                    </span>
+                  </Tip>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px]">{node.title || 'Untitled step'}</div>
+                    {node.description && node.description !== node.title && (
+                      <div className="mt-0.5 truncate text-xs text-muted">{node.description}</div>
+                    )}
+                  </div>
+                  <FolderMenu
+                    value={repoId}
+                    onChange={(id) => setFolder(node, id)}
+                    trigger={
+                      <button
+                        disabled={running}
+                        title={repo?.local_path ?? 'Choose the folder this step works in'}
+                        className="hidden h-7 max-w-40 items-center gap-1.5 rounded-md px-2 text-xs text-muted hover:bg-hover hover:text-ink disabled:opacity-50 data-[state=open]:bg-hover sm:flex"
+                      >
+                        <FolderGit2 size={13} className="shrink-0" />
+                        <span className="truncate">{repo?.name ?? 'No folder'}</span>
+                      </button>
                     }
-                  >
-                    <Square size={10} fill="currentColor" />
-                    Stop
-                  </Button>
-                ) : (
-                  (node.kind === 'session' || node.kind === 'task') && (
-                    <Button size="sm" variant="secondary" onClick={() => void run(node)}>
-                      <Play size={11} fill="currentColor" />
-                      Run
+                  />
+                  {node.primary_agent && <ProviderLogo agent={node.primary_agent} size={14} />}
+                  {node.thread_id && (
+                    <Button size="sm" onClick={() => onSelect(node.thread_id!)}>
+                      Open
+                      <ArrowUpRight size={12} />
                     </Button>
-                  )
-                )}
-                <MenuRoot>
-                  <MenuTrigger asChild>
-                    <button
-                      aria-label={`Options for ${node.title}`}
-                      className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-ink data-[state=open]:bg-hover"
-                    >
-                      <MoreHorizontal size={16} />
-                    </button>
-                  </MenuTrigger>
-                  <MenuContent align="end" className="w-52">
-                    <MenuItem onSelect={() => setAdd({ parent: node.id })}>
-                      <CornerDownRight size={14} className="text-muted" />
-                      Add a step after this
-                    </MenuItem>
-                    <MenuSeparator />
-                    <MenuItem danger onSelect={() => setRemove(node)}>
-                      <Trash2 size={14} />
-                      Delete
-                    </MenuItem>
-                  </MenuContent>
-                </MenuRoot>
-              </div>
+                  )}
+                  {running ? (
+                    <Button size="sm" variant="secondary" onClick={() => stop(node)}>
+                      <Square size={10} fill="currentColor" />
+                      Stop
+                    </Button>
+                  ) : (
+                    (node.kind === 'session' || node.kind === 'task') && (
+                      <Button size="sm" variant="secondary" onClick={() => void run(node)}>
+                        <Play size={11} fill="currentColor" />
+                        Run
+                      </Button>
+                    )
+                  )}
+                  <MoreActions label={`Options for ${node.title}`} actions={nodeActions(node)} />
+                </div>
+              </ContextActions>
             );
           })}
         </Card>

@@ -1,11 +1,19 @@
+import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Menu from '@radix-ui/react-dropdown-menu';
 import * as Switch from '@radix-ui/react-switch';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { X, ChevronDown, Check, ChevronRight, LoaderCircle } from 'lucide-react';
+import { X, ChevronDown, Check, ChevronRight, LoaderCircle, MoreHorizontal } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import type { ButtonHTMLAttributes, ComponentProps, ReactNode, SelectHTMLAttributes } from 'react';
+import { Fragment } from 'react';
+import type {
+  ButtonHTMLAttributes,
+  ComponentProps,
+  ComponentType,
+  ReactNode,
+  SelectHTMLAttributes,
+} from 'react';
 import type { Tone } from '../lib/format';
 
 export const cn = (...args: ClassValue[]) => twMerge(clsx(args));
@@ -575,5 +583,86 @@ export function MenuSubContent({ className, ...props }: ComponentProps<typeof Me
         {...props}
       />
     </Menu.Portal>
+  );
+}
+
+// ---- Row actions -------------------------------------------------------------
+
+/** One command on a row, shown in both its right-click menu and its "…" menu. */
+export type Action = {
+  label: string;
+  icon?: ComponentType<{ size?: number; className?: string }>;
+  onSelect: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+  /** Draw a divider above this action. */
+  separated?: boolean;
+};
+
+function actionBody(action: Action) {
+  const Icon = action.icon;
+  return (
+    <>
+      {Icon && <Icon size={14} className={action.danger ? undefined : 'text-muted'} />}
+      {action.label}
+    </>
+  );
+}
+
+/** Right-click menu for a row. The child is the row itself. */
+export function ContextActions({ actions, children }: { actions: Action[]; children: ReactNode }) {
+  if (!actions.length) return <>{children}</>;
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content
+          collisionPadding={12}
+          // Actions such as Rename move focus themselves; don't pull it back.
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className={cn(menuSurface, 'w-52')}
+        >
+          {actions.map((action) => (
+            <Fragment key={action.label}>
+              {action.separated && <ContextMenu.Separator className="-mx-1 my-1 h-px bg-line/70" />}
+              <ContextMenu.Item
+                disabled={action.disabled}
+                onSelect={action.onSelect}
+                className={cn(menuItem, action.danger && 'text-danger')}
+              >
+                {actionBody(action)}
+              </ContextMenu.Item>
+            </Fragment>
+          ))}
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
+  );
+}
+
+/** The "…" button that opens the same actions as a row's right-click menu. */
+export function MoreActions({ actions, label }: { actions: Action[]; label: string }) {
+  return (
+    <MenuRoot>
+      <MenuTrigger asChild>
+        <button
+          aria-label={label}
+          onClick={(e) => e.stopPropagation()}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-ink data-[state=open]:bg-hover"
+        >
+          <MoreHorizontal size={16} />
+        </button>
+      </MenuTrigger>
+      <MenuContent align="end" className="w-52">
+        {actions.map((action) => (
+          <Fragment key={action.label}>
+            {action.separated && <MenuSeparator />}
+            <MenuItem disabled={action.disabled} danger={action.danger} onSelect={action.onSelect}>
+              {actionBody(action)}
+            </MenuItem>
+          </Fragment>
+        ))}
+      </MenuContent>
+    </MenuRoot>
   );
 }

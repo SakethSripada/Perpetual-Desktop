@@ -6,12 +6,14 @@ import {
   Trash2,
   GitBranch,
   FolderOpen,
-  MoreHorizontal,
   Lock,
   Search,
   ChevronDown,
+  Copy,
 } from 'lucide-react';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useStore } from '../lib/store';
+import { isMac } from '../lib/platform';
 import { useAddFolder } from './AddFolder';
 import { action, native, rpc } from '../lib/api';
 import type { GithubRepository, Repo } from '../lib/types';
@@ -19,7 +21,10 @@ import {
   Button,
   Card,
   Confirm,
+  ContextActions,
   Empty,
+  MoreActions,
+  type Action,
   MenuContent,
   MenuItem,
   MenuRoot,
@@ -34,6 +39,30 @@ export function Projects() {
   const [remove, setRemove] = useState<Repo | null>(null);
   const folder = useAddFolder();
   const connect = () => folder.pick();
+  const repoActions = (repo: Repo): Action[] => [
+    ...(repo.local_path
+      ? [
+          {
+            label: isMac ? 'Show in Finder' : 'Show in File Explorer',
+            icon: FolderOpen,
+            onSelect: () => void action(() => revealItemInDir(repo.local_path!)),
+          },
+          {
+            label: 'Copy path',
+            icon: Copy,
+            onSelect: () =>
+              void action(() => navigator.clipboard.writeText(repo.local_path!), 'Path copied'),
+          },
+        ]
+      : []),
+    {
+      label: 'Remove from Perpetual',
+      icon: Trash2,
+      danger: true,
+      separated: !!repo.local_path,
+      onSelect: () => setRemove(repo),
+    },
+  ];
   const addMenu = (
     <MenuRoot>
       <MenuTrigger asChild>
@@ -65,40 +94,24 @@ export function Projects() {
       {store.repos.length ? (
         <Card className="overflow-hidden">
           {store.repos.map((repo) => (
-            <div
-              key={repo.id}
-              className="flex items-center gap-3 border-b border-line/60 px-4 py-3 last:border-0"
-            >
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-hover text-muted">
-                {repo.kind === 'github' ? <Github size={16} /> : <FolderGit2 size={16} />}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[13px] font-medium">{repo.name}</div>
-                <div className="mt-0.5 truncate font-mono text-[11px] text-muted selectable">
-                  {repo.local_path || repo.remote_url}
+            <ContextActions key={repo.id} actions={repoActions(repo)}>
+              <div className="flex items-center gap-3 border-b border-line/60 px-4 py-3 last:border-0 data-[state=open]:bg-hover">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-hover text-muted">
+                  {repo.kind === 'github' ? <Github size={16} /> : <FolderGit2 size={16} />}
                 </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] font-medium">{repo.name}</div>
+                  <div className="mt-0.5 truncate font-mono text-[11px] text-muted selectable">
+                    {repo.local_path || repo.remote_url}
+                  </div>
+                </div>
+                <span className="hidden shrink-0 items-center gap-1.5 text-xs text-muted sm:flex">
+                  <GitBranch size={12} />
+                  {repo.default_branch}
+                </span>
+                <MoreActions label={`Options for ${repo.name}`} actions={repoActions(repo)} />
               </div>
-              <span className="hidden shrink-0 items-center gap-1.5 text-xs text-muted sm:flex">
-                <GitBranch size={12} />
-                {repo.default_branch}
-              </span>
-              <MenuRoot>
-                <MenuTrigger asChild>
-                  <button
-                    aria-label={`Options for ${repo.name}`}
-                    className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-ink data-[state=open]:bg-hover"
-                  >
-                    <MoreHorizontal size={16} />
-                  </button>
-                </MenuTrigger>
-                <MenuContent align="end">
-                  <MenuItem danger onSelect={() => setRemove(repo)}>
-                    <Trash2 size={14} />
-                    Remove from Perpetual
-                  </MenuItem>
-                </MenuContent>
-              </MenuRoot>
-            </div>
+            </ContextActions>
           ))}
         </Card>
       ) : (

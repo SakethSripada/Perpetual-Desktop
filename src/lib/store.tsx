@@ -57,6 +57,8 @@ interface Store extends Snapshot {
   /** Sign in to an account, or to the provider's own CLI when none is given. */
   signIn: (target: { accountId: string } | { agent: AgentKind }) => Promise<void>;
   savePolicy: (patch: Partial<LimitPolicy>) => Promise<void>;
+  /** Arrange tasks in this order (first = top), updating the list right away. */
+  reorderThreads: (orderedIds: string[]) => Promise<void>;
   onThreadEvent: (listener: EventListener) => () => void;
 }
 const Context = createContext<Store>(null!);
@@ -178,6 +180,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [refresh],
   );
 
+  const reorderThreads = useCallback(
+    async (orderedIds: string[]) => {
+      setState((old) => {
+        const byId = new Map(old.threads.map((t) => [t.id, t]));
+        const ordered = orderedIds.map((id) => byId.get(id)).filter(Boolean) as AgentThread[];
+        const rest = old.threads.filter((t) => !orderedIds.includes(t.id));
+        return { ...old, threads: [...ordered, ...rest] };
+      });
+      try {
+        await rpc('reorder_agent_threads', { ordered_ids: orderedIds });
+      } catch (err) {
+        toast.error(errorMessage(err));
+        await refresh();
+      }
+    },
+    [refresh],
+  );
+
   const onThreadEvent = useCallback((listener: EventListener) => {
     listeners.current.add(listener);
     return () => void listeners.current.delete(listener);
@@ -258,6 +278,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         activate,
         signIn,
         savePolicy,
+        reorderThreads,
         onThreadEvent,
       }}
     >

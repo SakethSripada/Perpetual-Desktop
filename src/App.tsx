@@ -21,7 +21,7 @@ import { relativeTime, statusInfo } from './lib/format';
 import { isMac, shortcut } from './lib/platform';
 import { Button, Dot, IconButton, Kbd, Modal, PerpetualMark, cn } from './components/ui';
 import { SidebarAccounts } from './components/AccountSwitcher';
-import { LoaderGrid } from './components/ai';
+import { TaskList } from './components/TaskList';
 import { Conversation } from './components/Conversation';
 import { Accounts } from './components/Accounts';
 import { Settings } from './components/Settings';
@@ -70,6 +70,7 @@ export default function App() {
   const [search, setSearch] = useState(false);
   const [sidebar, setSidebar] = useState(true);
   const [addAccount, setAddAccount] = useState(false);
+  const [reviewFor, setReviewFor] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [maximized, setMaximized] = useState(false);
   const resolved = useResolvedTheme(theme);
@@ -192,33 +193,14 @@ export default function App() {
           </nav>
           <div className="mt-5 px-5 pb-1 text-[11px] font-medium text-faint">Tasks</div>
           <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-            {store.threads.map((t) => {
-              const status = statusInfo(t.status);
-              const flagged = status.live || status.tone === 'warning' || status.tone === 'danger';
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => selectThread(t.id)}
-                  title={t.title}
-                  className={cn(
-                    'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] transition-colors',
-                    selected === t.id && page === 'chat'
-                      ? 'bg-hover text-ink'
-                      : 'text-muted hover:bg-hover hover:text-ink',
-                  )}
-                >
-                  <span className="min-w-0 flex-1 truncate">{t.title || 'Untitled task'}</span>
-                  {status.tone === 'accent' && status.live ? (
-                    <LoaderGrid size={3} />
-                  ) : (
-                    flagged && <Dot tone={status.tone} live={status.live} />
-                  )}
-                </button>
-              );
-            })}
-            {!store.threads.length && !store.loading && (
-              <p className="px-3 py-1.5 text-xs text-faint">No tasks yet</p>
-            )}
+            <TaskList
+              selectedId={page === 'chat' ? selected : null}
+              onSelect={selectThread}
+              onReview={(id) => {
+                selectThread(id);
+                setReviewFor(id);
+              }}
+            />
           </div>
           <div className="space-y-0.5 border-t border-line/60 p-2">
             <SidebarAccounts
@@ -290,6 +272,8 @@ export default function App() {
           <Conversation
             key={selected || 'new'}
             thread={thread}
+            openReview={!!thread && reviewFor === thread.id}
+            onReviewOpened={() => setReviewFor(null)}
             onSelect={selectThread}
             onNavigate={navigate}
           />

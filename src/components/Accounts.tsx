@@ -4,7 +4,6 @@ import {
   Plus,
   RefreshCw,
   GripVertical,
-  MoreHorizontal,
   ArrowUp,
   ArrowDown,
   Pencil,
@@ -43,13 +42,11 @@ import {
   Button,
   Card,
   Confirm,
+  ContextActions,
   Empty,
+  MoreActions,
+  type Action,
   IconButton,
-  MenuContent,
-  MenuItem,
-  MenuRoot,
-  MenuSeparator,
-  MenuTrigger,
   Modal,
   PageHeading,
   ProviderLogo,
@@ -97,6 +94,67 @@ export function Accounts({
     const target = ordered[index + step];
     if (target) reorder(id, target.id);
   };
+  const accountActions = (account: ProviderAccountStatus, index: number): Action[] => [
+    ...(!account.active && account.enabled && account.authenticated
+      ? [{ label: 'Use this account', icon: Check, onSelect: () => void store.activate(account) }]
+      : []),
+    { label: 'Rename', icon: Pencil, onSelect: () => setRename(account) },
+    {
+      label: 'Move up',
+      icon: ArrowUp,
+      disabled: index === 0,
+      onSelect: () => move(account.id, -1),
+    },
+    {
+      label: 'Move down',
+      icon: ArrowDown,
+      disabled: index === rows.length - 1,
+      onSelect: () => move(account.id, 1),
+    },
+    account.auth_mode === 'oauth_token'
+      ? {
+          label: 'Update setup token',
+          icon: KeyRound,
+          separated: true,
+          onSelect: () => setToken(account),
+        }
+      : {
+          label: account.authenticated ? 'Sign in again' : 'Sign in',
+          icon: LogIn,
+          separated: true,
+          onSelect: () => void store.signIn({ accountId: account.id }),
+        },
+    {
+      label: 'Open in terminal',
+      icon: Terminal,
+      disabled: !account.installed,
+      onSelect: () => void action(() => signIn(account.id, true)),
+    },
+    ...(account.agent === 'codex'
+      ? [
+          {
+            label: account.use_credits ? 'Stop using reset credits' : 'Use earned reset credits',
+            icon: Gift,
+            onSelect: () =>
+              account.use_credits
+                ? void update(account.id, { use_credits: false })
+                : setCredits(account),
+          },
+        ]
+      : []),
+    {
+      label: account.enabled ? 'Pause in rotation' : 'Resume in rotation',
+      icon: account.enabled ? Pause : Play,
+      onSelect: () => void update(account.id, { enabled: !account.enabled }),
+    },
+    {
+      label: 'Remove',
+      icon: Trash2,
+      danger: true,
+      separated: true,
+      onSelect: () => setRemove(account),
+    },
+  ];
   const refresh = async () => {
     setRefreshing(true);
     await action(store.detect);
@@ -137,158 +195,82 @@ export function Accounts({
             rows.map((account, index) => {
               const state = accountState(account);
               return (
-                <div
-                  key={account.id}
-                  draggable
-                  onDragStart={(e) => {
-                    setDragging(account.id);
-                    e.dataTransfer.effectAllowed = 'move';
-                  }}
-                  onDragOver={(e) => {
-                    if (!dragging) return;
-                    e.preventDefault();
-                    setOver(account.id);
-                  }}
-                  onDragLeave={() => setOver((v) => (v === account.id ? null : v))}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    if (dragging) reorder(dragging, account.id);
-                    setDragging(null);
-                    setOver(null);
-                  }}
-                  onDragEnd={() => {
-                    setDragging(null);
-                    setOver(null);
-                  }}
-                  className={cn(
-                    'group flex items-center gap-3 border-b border-line/60 py-3 pr-3 pl-1.5 transition-colors last:border-0',
-                    dragging === account.id && 'opacity-40',
-                    over === account.id && dragging !== account.id && 'bg-hover',
-                  )}
-                >
-                  <GripVertical
-                    size={15}
-                    className="shrink-0 cursor-grab text-faint opacity-0 transition-opacity group-hover:opacity-100 active:cursor-grabbing"
-                  />
-                  <span className="w-3 shrink-0 text-right text-xs text-faint tabular-nums">
-                    {index + 1}
-                  </span>
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-hover">
-                    <ProviderLogo agent={account.agent} size={16} />
-                  </div>
-                  <div className={cn('min-w-0 flex-1', !account.enabled && 'opacity-55')}>
-                    <div className="truncate text-[13px] font-medium selectable">
-                      {accountName(account)}
+                <ContextActions key={account.id} actions={accountActions(account, index)}>
+                  <div
+                    draggable
+                    onDragStart={(e) => {
+                      setDragging(account.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    onDragOver={(e) => {
+                      if (!dragging) return;
+                      e.preventDefault();
+                      setOver(account.id);
+                    }}
+                    onDragLeave={() => setOver((v) => (v === account.id ? null : v))}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (dragging) reorder(dragging, account.id);
+                      setDragging(null);
+                      setOver(null);
+                    }}
+                    onDragEnd={() => {
+                      setDragging(null);
+                      setOver(null);
+                    }}
+                    className={cn(
+                      'group flex items-center gap-3 border-b border-line/60 py-3 pr-3 pl-1.5 transition-colors last:border-0',
+                      dragging === account.id && 'opacity-40',
+                      over === account.id && dragging !== account.id && 'bg-hover',
+                    )}
+                  >
+                    <GripVertical
+                      size={15}
+                      className="shrink-0 cursor-grab text-faint opacity-0 transition-opacity group-hover:opacity-100 active:cursor-grabbing"
+                    />
+                    <span className="w-3 shrink-0 text-right text-xs text-faint tabular-nums">
+                      {index + 1}
+                    </span>
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-hover">
+                      <ProviderLogo agent={account.agent} size={16} />
                     </div>
-                    <div className="mt-0.5 truncate text-xs text-muted">
-                      {accountDetail(account) || providerName(account.agent)}
+                    <div className={cn('min-w-0 flex-1', !account.enabled && 'opacity-55')}>
+                      <div className="truncate text-[13px] font-medium selectable">
+                        {accountName(account)}
+                      </div>
+                      <div className="mt-0.5 truncate text-xs text-muted">
+                        {accountDetail(account) || providerName(account.agent)}
+                      </div>
                     </div>
+                    <StateBadge account={account} />
+                    {state === 'ready' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => void store.activate(account)}
+                      >
+                        Use
+                      </Button>
+                    )}
+                    {state === 'signed_out' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          account.auth_mode === 'oauth_token'
+                            ? setToken(account)
+                            : void store.signIn({ accountId: account.id })
+                        }
+                      >
+                        Sign in
+                      </Button>
+                    )}
+                    <MoreActions
+                      label={`Options for ${accountName(account)}`}
+                      actions={accountActions(account, index)}
+                    />
                   </div>
-                  <StateBadge account={account} />
-                  {state === 'ready' && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => void store.activate(account)}
-                    >
-                      Use
-                    </Button>
-                  )}
-                  {state === 'signed_out' && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() =>
-                        account.auth_mode === 'oauth_token'
-                          ? setToken(account)
-                          : void store.signIn({ accountId: account.id })
-                      }
-                    >
-                      Sign in
-                    </Button>
-                  )}
-                  <MenuRoot>
-                    <MenuTrigger asChild>
-                      <button
-                        aria-label={`Options for ${accountName(account)}`}
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-ink data-[state=open]:bg-hover"
-                      >
-                        <MoreHorizontal size={16} />
-                      </button>
-                    </MenuTrigger>
-                    <MenuContent align="end" className="w-56">
-                      {!account.active && account.enabled && account.authenticated && (
-                        <MenuItem onSelect={() => void store.activate(account)}>
-                          <Check size={14} className="text-muted" />
-                          Use this account
-                        </MenuItem>
-                      )}
-                      <MenuItem onSelect={() => setRename(account)}>
-                        <Pencil size={14} className="text-muted" />
-                        Rename
-                      </MenuItem>
-                      <MenuItem disabled={index === 0} onSelect={() => move(account.id, -1)}>
-                        <ArrowUp size={14} className="text-muted" />
-                        Move up
-                      </MenuItem>
-                      <MenuItem
-                        disabled={index === rows.length - 1}
-                        onSelect={() => move(account.id, 1)}
-                      >
-                        <ArrowDown size={14} className="text-muted" />
-                        Move down
-                      </MenuItem>
-                      <MenuSeparator />
-                      {account.auth_mode === 'oauth_token' ? (
-                        <MenuItem onSelect={() => setToken(account)}>
-                          <KeyRound size={14} className="text-muted" />
-                          Update setup token
-                        </MenuItem>
-                      ) : (
-                        <MenuItem onSelect={() => void store.signIn({ accountId: account.id })}>
-                          <LogIn size={14} className="text-muted" />
-                          {account.authenticated ? 'Sign in again' : 'Sign in'}
-                        </MenuItem>
-                      )}
-                      <MenuItem
-                        disabled={!account.installed}
-                        onSelect={() => void action(() => signIn(account.id, true))}
-                      >
-                        <Terminal size={14} className="text-muted" />
-                        Open in terminal
-                      </MenuItem>
-                      {account.agent === 'codex' && (
-                        <MenuItem
-                          onSelect={() =>
-                            account.use_credits
-                              ? void update(account.id, { use_credits: false })
-                              : setCredits(account)
-                          }
-                        >
-                          <Gift size={14} className="text-muted" />
-                          {account.use_credits
-                            ? 'Stop using reset credits'
-                            : 'Use earned reset credits'}
-                        </MenuItem>
-                      )}
-                      <MenuItem
-                        onSelect={() => void update(account.id, { enabled: !account.enabled })}
-                      >
-                        {account.enabled ? (
-                          <Pause size={14} className="text-muted" />
-                        ) : (
-                          <Play size={14} className="text-muted" />
-                        )}
-                        {account.enabled ? 'Pause in rotation' : 'Resume in rotation'}
-                      </MenuItem>
-                      <MenuSeparator />
-                      <MenuItem danger onSelect={() => setRemove(account)}>
-                        <Trash2 size={14} />
-                        Remove
-                      </MenuItem>
-                    </MenuContent>
-                  </MenuRoot>
-                </div>
+                </ContextActions>
               );
             })
           ) : (

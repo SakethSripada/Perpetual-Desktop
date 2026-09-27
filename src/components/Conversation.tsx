@@ -67,10 +67,15 @@ const LIVE = ['running', 'running_in_cloud', 'awaiting_approval', 'queued'];
 
 export function Conversation({
   thread,
+  openReview = false,
+  onReviewOpened,
   onSelect,
   onNavigate,
 }: {
   thread?: AgentThread;
+  /** Open the Changes panel once, then report it through `onReviewOpened`. */
+  openReview?: boolean;
+  onReviewOpened?: () => void;
   onNavigate: (page: string) => void;
   onSelect: (id: string | null) => void;
 }) {
@@ -85,6 +90,11 @@ export function Conversation({
   const [turnAgents, setTurnAgents] = useState<Record<string, AgentKind>>({});
   const [loaded, setLoaded] = useState(false);
   const [review, setReview] = useState(false);
+  useEffect(() => {
+    if (!openReview) return;
+    setReview(true);
+    onReviewOpened?.();
+  }, [openReview]);
   const bottom = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
