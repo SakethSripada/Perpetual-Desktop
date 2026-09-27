@@ -8,7 +8,7 @@ import { Switch } from './components/Switch';
 
 export function App() {
   return (
-    <div id="top" className="grain">
+    <div id="top">
       <Nav />
       <main>
         <Hero />

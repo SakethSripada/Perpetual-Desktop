@@ -15,16 +15,30 @@ export const Video = forwardRef<
     variant?: string;
     /** Seconds to skip at the start, on first play and on every loop. */
     start?: number;
+    /** Download once the page is idle instead of waiting to scroll near. */
+    eager?: boolean;
     className?: string;
     label: string;
   }
 >(function Video(
-  { name, autoPlay = true, loop = true, variant = '', start = 0, className, label },
+  { name, autoPlay = true, loop = true, variant = '', start = 0, eager = false, className, label },
   ref,
 ) {
   const video = useRef<HTMLVideoElement>(null);
   const [near, setNear] = useState(false);
   useImperativeHandle(ref, () => video.current!);
+
+  // Videos seeked by scroll must be fully downloaded before they're reached,
+  // or the first fast scroll stalls waiting on the network.
+  useEffect(() => {
+    if (!eager) return;
+    const start = () => setNear(true);
+    const idle = () =>
+      'requestIdleCallback' in window ? window.requestIdleCallback(start) : setTimeout(start, 1);
+    if (document.readyState === 'complete') idle();
+    else window.addEventListener('load', idle, { once: true });
+    return () => window.removeEventListener('load', idle);
+  }, [eager]);
 
   useEffect(() => {
     const el = video.current;

@@ -30,8 +30,6 @@ export function Switch() {
     return () => v.removeEventListener('timeupdate', sync);
   }, []);
 
-  const active = AGENTS.find((a) => a.id === agent)!;
-
   return (
     <section className="relative px-5 pt-4 pb-28 sm:px-8 sm:pt-8 sm:pb-36">
       <Reveal className="mx-auto max-w-3xl text-center">
@@ -78,12 +76,17 @@ export function Switch() {
 
       <div ref={frame} className="mx-auto mt-10 max-w-[1120px] [perspective:2000px]">
         <motion.div style={{ rotateX, scale, transformOrigin: '50% 100%' }} className="relative">
-          <motion.div
-            aria-hidden
-            animate={{ backgroundColor: active.glow }}
-            transition={{ duration: 1.2 }}
-            className="absolute inset-x-[8%] -bottom-10 top-[20%] -z-10 rounded-full blur-[90px]"
-          />
+          {AGENTS.map((a) => (
+            <div
+              key={a.id}
+              aria-hidden
+              style={{
+                backgroundImage: `radial-gradient(closest-side, ${a.glow}, transparent)`,
+                opacity: a.id === agent ? 1 : 0,
+              }}
+              className="absolute -inset-x-[4%] -bottom-24 top-[10%] -z-10 transition-opacity duration-[1200ms]"
+            />
+          ))}
           <div className="overflow-hidden rounded-[14px] bg-[#1f1f1f] shadow-[0_0_0_1px_rgba(255,255,255,0.09),0_50px_120px_-40px_rgba(0,0,0,0.95)] sm:rounded-[18px]">
             <Video
               ref={video}

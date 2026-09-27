@@ -10,8 +10,8 @@ const EASE = [0.16, 1, 0.3, 1] as const;
 
 function rise(delay: number) {
   return {
-    initial: { opacity: 0, y: 24, filter: 'blur(10px)' },
-    animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+    initial: { opacity: 0, y: 24 },
+    animate: { opacity: 1, y: 0 },
     transition: { duration: 1.1, delay, ease: EASE },
   };
 }
@@ -33,8 +33,11 @@ export function Hero() {
     <section ref={section} className="relative isolate overflow-x-clip pt-36 pb-10 sm:pt-44">
       {/* Light behind the window, and a floor that recedes into it. */}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[1100px]">
-        <LiquidGradient className="absolute inset-x-0 top-0 h-[900px] [mask-image:linear-gradient(to_bottom,black_55%,transparent)]" />
-        <div className="absolute top-[420px] left-1/2 h-[520px] w-[1100px] -translate-x-1/2 rounded-[50%] bg-[radial-gradient(closest-side,rgba(110,120,255,0.12),transparent)] blur-2xl" />
+        <LiquidGradient className="absolute inset-x-0 top-0 h-[900px]" />
+        {/* Fade into the page with a plain overlay rather than a mask, which
+            would make the browser redraw the whole moving surface. */}
+        <div className="absolute inset-x-0 top-[480px] h-[421px] bg-gradient-to-b from-transparent to-bg" />
+        <div className="absolute top-[420px] left-1/2 h-[520px] w-[1100px] -translate-x-1/2 rounded-[50%] bg-[radial-gradient(closest-side,rgba(110,120,255,0.12),transparent)]" />
         <div className="absolute top-[640px] left-1/2 h-[620px] w-[2200px] -translate-x-1/2 [perspective:900px]">
           <div className="h-full w-full origin-top [transform:rotateX(72deg)] bg-[linear-gradient(rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.06)_1px,transparent_1px)] bg-[size:72px_72px] [mask-image:radial-gradient(ellipse_at_top,black_10%,transparent_65%)]" />
         </div>
@@ -63,7 +66,7 @@ export function Hero() {
           <DownloadButton />
           <a
             href={REPO}
-            className="inline-flex h-12 items-center gap-2 rounded-full px-5 text-[15px] font-medium text-white/85 ring-1 ring-white/25 backdrop-blur-sm transition-colors hover:bg-white/[0.08] hover:text-white"
+            className="inline-flex h-12 items-center gap-2 rounded-full px-5 text-[15px] font-medium text-white/85 ring-1 ring-white/25 transition-colors hover:bg-white/[0.08] hover:text-white"
           >
             <GithubLogo size={16} />
             View on GitHub
@@ -96,7 +99,7 @@ export function Hero() {
           <motion.div
             aria-hidden
             style={{ opacity: glow }}
-            className="absolute -inset-x-10 -bottom-16 top-1/3 -z-10 rounded-[40px] bg-[radial-gradient(closest-side,rgba(110,120,255,0.2),transparent)] blur-3xl"
+            className="absolute -inset-x-10 -bottom-16 top-1/3 -z-10 rounded-[40px] bg-[radial-gradient(closest-side,rgba(110,120,255,0.2),transparent)]"
           />
           <div className="overflow-hidden rounded-[14px] bg-[#1f1f1f] shadow-[0_0_0_1px_rgba(255,255,255,0.09),0_1px_0_0_rgba(255,255,255,0.08)_inset,0_50px_140px_-40px_rgba(0,0,0,0.95)] sm:rounded-[18px]">
             <Video
@@ -112,7 +115,7 @@ export function Hero() {
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 1, delay: 1.5, ease: EASE }}
             style={{ y: farY, translateZ: 60 }}
-            className="absolute top-[14%] -right-8 hidden w-64 rounded-2xl bg-[#232423]/90 p-2 text-left text-[13px] shadow-[0_0_0_1px_rgba(255,255,255,0.09),0_30px_70px_-24px_rgba(0,0,0,0.95)] backdrop-blur-md lg:block"
+            className="absolute top-[14%] -right-8 hidden w-64 rounded-2xl bg-[#232423]/95 p-2 text-left text-[13px] shadow-[0_0_0_1px_rgba(255,255,255,0.09),0_30px_70px_-24px_rgba(0,0,0,0.95)] lg:block"
           >
             <div className="flex items-center gap-2 px-2.5 pt-1.5 pb-1 text-[11px] text-faint">
               <img src="/brands/openai.svg" alt="" className="size-3" />

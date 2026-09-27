@@ -50,24 +50,30 @@ export function Story() {
   const rotateX = useTransform(progress, [0, 1], [reduce ? 0 : 4, 0]);
   const bar = useTransform(progress, [0, 1], ['0%', '100%']);
 
+  // Seek only when scroll moves the target, and chase it after each seek
+  // lands, so nothing runs while the page is still.
+  const seek = () => {
+    const v = video.current;
+    if (!v || v.readyState < 1 || v.seeking) return;
+    if (Math.abs(v.currentTime - target.current) > 0.02) v.currentTime = target.current;
+  };
   useMotionValueEvent(progress, 'change', (p) => {
     const clamped = Math.min(0.9999, Math.max(0, p));
     target.current = timeAt(clamped);
-    setStep(Math.floor(clamped * STEPS.length));
+    const next = Math.floor(clamped * STEPS.length);
+    setStep((s) => (s === next ? s : next));
+    seek();
   });
-
-  // Seek toward the scroll position once per frame, never stacking seeks.
   useEffect(() => {
-    let raf = 0;
-    const tick = () => {
-      const v = video.current;
-      if (v && v.readyState >= 2 && !v.seeking && Math.abs(v.currentTime - target.current) > 0.02) {
-        v.currentTime = target.current;
-      }
-      raf = requestAnimationFrame(tick);
+    const v = video.current;
+    if (!v) return;
+    v.addEventListener('seeked', seek);
+    v.addEventListener('loadeddata', seek);
+    return () => {
+      v.removeEventListener('seeked', seek);
+      v.removeEventListener('loadeddata', seek);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -112,13 +118,14 @@ export function Story() {
             <motion.div style={{ rotateY, rotateX }} className="relative">
               <div
                 aria-hidden
-                className="absolute -inset-10 -z-10 rounded-[48px] bg-[radial-gradient(closest-side,rgba(178,205,189,0.12),transparent)] blur-2xl"
+                className="absolute -inset-10 -z-10 rounded-[48px] bg-[radial-gradient(closest-side,rgba(178,205,189,0.12),transparent)]"
               />
               <div className="overflow-hidden rounded-[14px] bg-[#1f1f1f] shadow-[0_0_0_1px_rgba(255,255,255,0.09),0_40px_120px_-40px_rgba(0,0,0,0.95)]">
                 <Video
                   ref={video}
                   name="hero"
                   variant="-scrub"
+                  eager
                   autoPlay={false}
                   loop={false}
                   label="A Codex task streaming its work, switching accounts at a usage limit, and finishing"

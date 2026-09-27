@@ -181,8 +181,9 @@ function encode(dir, name) {
     '3',
     path.join(outDir, `${name}.jpg`),
   ]);
-  // Scroll-scrubbed videos need frequent keyframes to seek smoothly. Scroll
-  // sets the pace, so 30 fps at the size they're shown is enough.
+  // Scroll-scrubbed videos are seeked constantly: a keyframe every 4 frames
+  // and fast-decode settings keep each seek to a frame or two of work.
+  // Scroll sets the pace, so 24 fps at the size they're shown is enough.
   if (SCRUB.includes(name))
     run('ffmpeg', [
       '-y',
@@ -193,18 +194,20 @@ function encode(dir, name) {
       '-i',
       path.join(dir, 'frames.txt'),
       '-vf',
-      'fps=30,scale=1600:1000:flags=lanczos,format=yuv420p',
+      'fps=24,scale=1600:1000:flags=lanczos,format=yuv420p',
       '-an',
       '-c:v',
       'libx264',
       '-preset',
       'slow',
       '-crf',
-      '22',
+      '23',
+      '-tune',
+      'fastdecode',
       '-g',
-      '6',
+      '4',
       '-keyint_min',
-      '6',
+      '4',
       '-bf',
       '0',
       '-movflags',

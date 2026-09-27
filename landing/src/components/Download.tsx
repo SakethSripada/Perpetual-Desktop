@@ -37,7 +37,7 @@ export function Download() {
       <motion.div
         aria-hidden
         style={{ opacity: glow }}
-        className="absolute top-0 left-1/2 -z-10 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,rgba(178,205,189,0.14),transparent)] blur-2xl"
+        className="absolute top-0 left-1/2 -z-10 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,rgba(178,205,189,0.14),transparent)]"
       />
 
       <div className="flex justify-center [perspective:900px]">
@@ -45,14 +45,12 @@ export function Download() {
           style={{ rotateX, rotateY, y }}
           className="relative [transform-style:preserve-3d]"
         >
-          <motion.img
+          <img
             src="/icon.png"
             alt="Perpetual app icon"
             width={176}
             height={176}
-            animate={reduce ? undefined : { y: [0, -8, 0] }}
-            transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
-            className="relative size-[148px] drop-shadow-[0_40px_50px_rgba(0,0,0,0.75)] sm:size-[176px]"
+            className="icon-float relative size-[148px] drop-shadow-[0_40px_50px_rgba(0,0,0,0.75)] sm:size-[176px]"
           />
           {/* A soft reflection on the floor beneath. */}
           <img

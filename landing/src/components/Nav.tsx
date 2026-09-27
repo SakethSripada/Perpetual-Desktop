@@ -30,7 +30,7 @@ export function Nav() {
       <nav
         className={`relative mx-auto flex items-center gap-8 rounded-2xl transition-[max-width,height,padding,background-color,box-shadow,backdrop-filter] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
           floating
-            ? 'h-[52px] max-w-[880px] bg-[#141514]/70 pr-2 pl-4 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_1px_0_0_rgba(255,255,255,0.06)_inset,0_18px_50px_-18px_rgba(0,0,0,0.85)] backdrop-blur-xl backdrop-saturate-150'
+            ? 'h-[52px] max-w-[880px] bg-[#141514]/70 pr-2 pl-4 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_1px_0_0_rgba(255,255,255,0.06)_inset,0_18px_50px_-18px_rgba(0,0,0,0.85)] backdrop-blur-lg'
             : 'h-16 max-w-6xl bg-transparent px-2 shadow-[0_0_0_1px_rgba(255,255,255,0)] sm:px-3'
         }`}
       >
