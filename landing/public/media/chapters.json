@@ -1,0 +1,19 @@
+{
+  "hero": {
+    "typing": 2.36,
+    "working": 6.49,
+    "limit": 12.71,
+    "done": 18.03
+  },
+  "claude": {
+    "switched": 8.42,
+    "done": 17.04
+  },
+  "accounts": {
+    "open": 2.13
+  },
+  "approval": {
+    "asked": 7.72,
+    "done": 13.32
+  }
+}
