@@ -71,7 +71,7 @@ export function Story() {
   }, []);
 
   return (
-    <section id="how" ref={section} className="relative h-[340vh] scroll-mt-0">
+    <section id="how" ref={section} className="relative h-[320vh]">
       <div className="sticky top-0 flex h-svh items-center overflow-hidden">
         <div className="mx-auto grid w-full max-w-[1320px] items-center gap-8 px-5 sm:px-8 lg:grid-cols-[minmax(0,370px)_minmax(0,1fr)] lg:gap-14">
           <div className="relative order-2 min-h-[150px] lg:order-1 lg:min-h-[260px]">

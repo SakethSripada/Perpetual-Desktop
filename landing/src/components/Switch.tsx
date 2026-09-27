@@ -33,7 +33,7 @@ export function Switch() {
   const active = AGENTS.find((a) => a.id === agent)!;
 
   return (
-    <section className="relative px-5 pt-16 pb-28 sm:px-8 sm:pt-24 sm:pb-36">
+    <section className="relative px-5 pt-4 pb-28 sm:px-8 sm:pt-8 sm:pb-36">
       <Reveal className="mx-auto max-w-3xl text-center">
         <h2 className="text-[34px] leading-[1.06] font-semibold tracking-[-0.04em] text-balance sm:text-[52px]">
           <span className="headline-gradient">Codex or Claude Code.</span>
