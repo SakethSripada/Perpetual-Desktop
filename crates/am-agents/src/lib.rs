@@ -249,10 +249,14 @@ pub enum NormalizedEvent {
         delta: String,
     },
     ToolUse {
+        /// The provider's id for this call, used to pair it with its result.
+        call_id: Option<String>,
         name: String,
         input: serde_json::Value,
     },
     ToolResult {
+        /// The id of the call this result belongs to, when the provider says.
+        call_id: Option<String>,
         ok: bool,
         summary: String,
     },

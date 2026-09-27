@@ -2675,17 +2675,25 @@ fn map_event(session_id: &str, task_id: &str, ev: &NormalizedEvent) -> SessionEv
             Some(delta.clone()),
             json!({ "streaming": true }),
         ),
-        NormalizedEvent::ToolUse { name, input } => (
+        NormalizedEvent::ToolUse {
+            call_id,
+            name,
+            input,
+        } => (
             "tool",
             "tool_use",
             Some(name.clone()),
-            json!({ "input": input }),
+            json!({ "input": input, "call_id": call_id }),
         ),
-        NormalizedEvent::ToolResult { ok, summary } => (
+        NormalizedEvent::ToolResult {
+            call_id,
+            ok,
+            summary,
+        } => (
             "tool",
             "tool_result",
             Some(compact_event_detail(summary)),
-            json!({ "ok": ok, "summary": capped_event_detail(summary) }),
+            json!({ "ok": ok, "summary": capped_event_detail(summary), "call_id": call_id }),
         ),
         NormalizedEvent::FileChanged { path, change } => (
             "app",

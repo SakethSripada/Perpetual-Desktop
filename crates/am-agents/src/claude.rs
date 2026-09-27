@@ -525,7 +525,15 @@ pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
                                 .unwrap_or("tool")
                                 .to_string();
                             let input = block.get("input").cloned().unwrap_or(Value::Null);
-                            out.push(NormalizedEvent::ToolUse { name, input });
+                            let call_id = block
+                                .get("id")
+                                .and_then(|id| id.as_str())
+                                .map(str::to_string);
+                            out.push(NormalizedEvent::ToolUse {
+                                call_id,
+                                name,
+                                input,
+                            });
                         }
                         _ => {}
                     }
@@ -556,6 +564,10 @@ pub(crate) fn parse_line(v: &Value) -> Vec<NormalizedEvent> {
                             .unwrap_or(false);
                         let summary = stringify_tool_content(block.get("content"));
                         out.push(NormalizedEvent::ToolResult {
+                            call_id: block
+                                .get("tool_use_id")
+                                .and_then(|id| id.as_str())
+                                .map(str::to_string),
                             ok: !is_error,
                             summary,
                         });
@@ -672,6 +684,29 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_calls_and_results_share_the_provider_id() {
+        let call = parse_line(&json!({
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"command": "ls"}}
+            ]}
+        }));
+        assert!(
+            matches!(&call[0], NormalizedEvent::ToolUse { call_id: Some(id), .. } if id == "toolu_1")
+        );
+        let result = parse_line(&json!({
+            "type": "user",
+            "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}
+            ]}
+        }));
+        assert!(
+            matches!(&result[0], NormalizedEvent::ToolResult { call_id: Some(id), .. } if id == "toolu_1")
+        );
+    }
     use super::*;
     use serde_json::json;
 

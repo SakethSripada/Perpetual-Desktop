@@ -572,6 +572,7 @@ async fn handle_server_request(
         // turn. This also keeps options intact for the native webview UI.
         let _ = events_tx
             .send(NormalizedEvent::ToolUse {
+                call_id: None,
                 name: "request_user_input".to_string(),
                 input: params.clone(),
             })
@@ -586,6 +587,7 @@ async fn handle_server_request(
         // MCP servers in an ambiguous state.
         let _ = events_tx
             .send(NormalizedEvent::ToolUse {
+                call_id: None,
                 name: "mcp_elicitation".to_string(),
                 input: params,
             })
@@ -861,6 +863,7 @@ fn turn_status(status: &str) -> SessionStatus {
 
 /// Map a v2 `ThreadItem` into normalized events.
 fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
+    let call_id = item.get("id").and_then(Value::as_str).map(str::to_string);
     let mut out = Vec::new();
     match item.get("type").and_then(Value::as_str) {
         Some("agentMessage") if completed => {
@@ -893,11 +896,13 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                     status.to_string()
                 };
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok: status == "completed" && exit.unwrap_or(0) == 0,
                     summary,
                 });
             } else {
                 out.push(NormalizedEvent::ToolUse {
+                    call_id: call_id.clone(),
                     name: "Command".to_string(),
                     input: json!({ "command": command }),
                 });
@@ -920,6 +925,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                     });
                 }
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok: item.get("status").and_then(Value::as_str) == Some("completed"),
                     summary: format!(
                         "{} file change{}",
@@ -941,6 +947,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                 let ok = item.get("status").and_then(Value::as_str) == Some("completed")
                     && item.get("error").is_none();
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok,
                     summary: item
                         .pointer("/error/message")
@@ -951,6 +958,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                 });
             } else {
                 out.push(NormalizedEvent::ToolUse {
+                    call_id: call_id.clone(),
                     name,
                     input: item.get("arguments").cloned().unwrap_or(Value::Null),
                 });
@@ -967,6 +975,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
             if completed {
                 let status = item.get("status").and_then(Value::as_str).unwrap_or("");
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok: item
                         .get("success")
                         .and_then(Value::as_bool)
@@ -978,6 +987,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                 });
             } else {
                 out.push(NormalizedEvent::ToolUse {
+                    call_id: call_id.clone(),
                     name,
                     input: item.get("arguments").cloned().unwrap_or(Value::Null),
                 });
@@ -987,6 +997,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
             let query = item.get("query").and_then(Value::as_str).unwrap_or("");
             if completed {
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok: true,
                     summary: if query.is_empty() {
                         "Web search completed".into()
@@ -996,6 +1007,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                 });
             } else {
                 out.push(NormalizedEvent::ToolUse {
+                    call_id: call_id.clone(),
                     name: "Web search".into(),
                     input: json!({
                         "query": query,
@@ -1006,6 +1018,7 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
         }
         Some("imageView") if !completed => {
             out.push(NormalizedEvent::ToolUse {
+                call_id: call_id.clone(),
                 name: "View image".into(),
                 input: json!({ "path": item.get("path").cloned().unwrap_or(Value::Null) }),
             });
@@ -1024,11 +1037,12 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
                     })
                     .unwrap_or_else(|| "Image generation completed".into());
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok: matches!(status, "completed" | "succeeded" | "success"),
                     summary,
                 });
             } else {
-                out.push(NormalizedEvent::ToolUse {
+                out.push(NormalizedEvent::ToolUse { call_id: call_id.clone(),
                     name: "Image generation".into(),
                     input: json!({
                         "revisedPrompt": item.get("revisedPrompt").cloned().unwrap_or(Value::Null),
@@ -1045,11 +1059,12 @@ fn map_item(item: &Value, completed: bool) -> Vec<NormalizedEvent> {
             if completed {
                 let status = item.get("status").and_then(Value::as_str).unwrap_or("");
                 out.push(NormalizedEvent::ToolResult {
+                    call_id: call_id.clone(),
                     ok: matches!(status, "completed" | "succeeded" | "success"),
                     summary: format!("Collaboration {tool}: {status}"),
                 });
             } else {
-                out.push(NormalizedEvent::ToolUse {
+                out.push(NormalizedEvent::ToolUse { call_id: call_id.clone(),
                     name: format!("Collaboration/{tool}"),
                     input: json!({
                         "prompt": item.get("prompt").cloned().unwrap_or(Value::Null),
@@ -1180,6 +1195,25 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn item_start_and_completion_share_the_item_id() {
+        let started = map_item(
+            &json!({"type": "commandExecution", "id": "item-7", "command": "ls"}),
+            false,
+        );
+        assert!(started.iter().any(
+            |e| matches!(e, NormalizedEvent::ToolUse { call_id: Some(id), .. } if id == "item-7")
+        ));
+        let done = map_item(
+            &json!({"type": "commandExecution", "id": "item-7", "command": "ls", "status": "completed", "exitCode": 0, "aggregatedOutput": "a"}),
+            true,
+        );
+        assert!(done.iter().any(
+            |e| matches!(e, NormalizedEvent::ToolResult { call_id: Some(id), .. } if id == "item-7")
+        ));
+    }
     use super::*;
 
     #[test]
@@ -1365,7 +1399,7 @@ mod tests {
 
         assert!(matches!(
             events_rx.recv().await,
-            Some(NormalizedEvent::ToolUse { name, input })
+            Some(NormalizedEvent::ToolUse { call_id: None, name, input })
                 if name == "request_user_input" && input["questions"][0]["id"] == "scope"
         ));
         let response: Value = serde_json::from_str(&out_rx.recv().await.unwrap()).unwrap();
@@ -1558,7 +1592,7 @@ mod tests {
             true,
         );
         assert!(
-            matches!(&image[0], NormalizedEvent::ToolResult { ok: true, summary } if summary.contains("image.png"))
+            matches!(&image[0], NormalizedEvent::ToolResult { call_id: Some(id), ok: true, summary } if id == "i" && summary.contains("image.png"))
         );
     }
 }
