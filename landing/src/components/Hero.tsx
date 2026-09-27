@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { motion, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react';
 import { REPO } from '../lib/site';
-import { Aurora } from './Aurora';
+import { LiquidGradient } from './LiquidGradient';
 import { DownloadButton } from './DownloadButton';
 import { GithubLogo } from './Mark';
 import { Video } from './Video';
@@ -33,7 +33,7 @@ export function Hero() {
     <section ref={section} className="relative isolate overflow-x-clip pt-36 pb-10 sm:pt-44">
       {/* Light behind the window, and a floor that recedes into it. */}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[1100px]">
-        <Aurora className="absolute inset-x-0 top-0 h-[820px] [mask-image:linear-gradient(to_bottom,black_45%,transparent)]" />
+        <LiquidGradient className="absolute inset-x-0 top-0 h-[900px] [mask-image:linear-gradient(to_bottom,black_55%,transparent)]" />
         <div className="absolute top-[420px] left-1/2 h-[520px] w-[1100px] -translate-x-1/2 rounded-[50%] bg-[radial-gradient(closest-side,rgba(110,120,255,0.12),transparent)] blur-2xl" />
         <div className="absolute top-[640px] left-1/2 h-[620px] w-[2200px] -translate-x-1/2 [perspective:900px]">
           <div className="h-full w-full origin-top [transform:rotateX(72deg)] bg-[linear-gradient(rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.06)_1px,transparent_1px)] bg-[size:72px_72px] [mask-image:radial-gradient(ellipse_at_top,black_10%,transparent_65%)]" />
