@@ -33,29 +33,41 @@ export function Hero() {
       {/* Light behind the window, and a floor that recedes into it. */}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[1100px]">
         <div className="absolute top-[420px] left-1/2 h-[520px] w-[1100px] -translate-x-1/2 rounded-[50%] bg-[radial-gradient(closest-side,rgba(178,205,189,0.16),transparent)] blur-2xl" />
+        <div className="absolute top-[120px] left-[calc(50%-520px)] h-[420px] w-[520px] rounded-full bg-[radial-gradient(closest-side,rgba(111,220,166,0.10),transparent)] blur-3xl" />
+        <div className="absolute top-[60px] left-[calc(50%+80px)] h-[380px] w-[480px] rounded-full bg-[radial-gradient(closest-side,rgba(217,119,87,0.07),transparent)] blur-3xl" />
         <div className="absolute top-[640px] left-1/2 h-[620px] w-[2200px] -translate-x-1/2 [perspective:900px]">
           <div className="h-full w-full origin-top [transform:rotateX(72deg)] bg-[linear-gradient(rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.06)_1px,transparent_1px)] bg-[size:72px_72px] [mask-image:radial-gradient(ellipse_at_top,black_10%,transparent_65%)]" />
         </div>
       </div>
 
       <div className="mx-auto max-w-6xl px-5 text-center sm:px-8">
-        <motion.h1
-          {...rise(0.05)}
-          className="mx-auto max-w-5xl text-[44px] leading-[1.02] font-semibold tracking-[-0.045em] sm:text-[68px] lg:text-[84px]"
-        >
-          <span className="headline-gradient lg:whitespace-nowrap">Codex and Claude Code,</span>
+        <h1 className="mx-auto max-w-5xl text-[44px] leading-[1.04] font-semibold tracking-[-0.045em] sm:text-[68px] lg:text-[84px]">
+          <span className="lg:whitespace-nowrap">
+            <Word delay={0.05}>Codex</Word>
+            <LogoTile src="/brands/openai.svg" tint="codex" delay={0.25} />
+            <Word delay={0.12}>and</Word> <Word delay={0.19}>Claude</Word>{' '}
+            <Word delay={0.26}>Code</Word>
+            <LogoTile src="/brands/claude.svg" tint="claude" delay={0.4} />
+          </span>
           <br />
-          <span className="muted-gradient">without the stops.</span>
-        </motion.h1>
+          <motion.span
+            initial={reduce ? false : { opacity: 0, y: 28, filter: 'blur(12px)' }}
+            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+            transition={{ duration: 1.2, delay: 0.42, ease: EASE }}
+            className="accent-gradient inline-block pb-[0.06em]"
+          >
+            without the stops.
+          </motion.span>
+        </h1>
         <motion.p
-          {...rise(0.18)}
-          className="mx-auto mt-6 max-w-xl text-[17px] leading-7 text-muted sm:text-[18px]"
+          {...rise(0.55)}
+          className="mx-auto mt-7 max-w-xl text-[17px] leading-7 text-muted sm:text-[18px]"
         >
-          A desktop workspace for your coding agents. When an account reaches its usage limit, the
-          task keeps going on the next one.
+          A desktop workspace for your coding agents. When an account hits its usage limit,{' '}
+          <span className="text-ink">the task moves to the next one and keeps going.</span>
         </motion.p>
         <motion.div
-          {...rise(0.3)}
+          {...rise(0.65)}
           className="mt-9 flex flex-wrap items-center justify-center gap-3"
         >
           <DownloadButton />
@@ -68,18 +80,14 @@ export function Hero() {
           </a>
         </motion.div>
         <motion.div
-          {...rise(0.4)}
-          className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[13px] whitespace-nowrap text-faint"
+          {...rise(0.75)}
+          className="mt-6 flex items-center justify-center gap-2 text-[13px] text-faint"
         >
-          <span>Free and open source</span>
-          <span className="hidden h-3 w-px bg-line-strong sm:block" />
-          <span className="flex items-center gap-2">
-            Works with
-            <img src="/brands/openai.svg" alt="" className="size-3.5 opacity-80" />
-            Codex
-            <img src="/brands/claude.svg" alt="" className="size-3.5" />
-            Claude Code
+          <span className="relative flex size-1.5">
+            <span className="absolute inset-0 animate-ping rounded-full bg-accent/60 [animation-duration:2.4s]" />
+            <span className="relative size-1.5 rounded-full bg-accent" />
           </span>
+          Free and open source, for Windows and macOS
         </motion.div>
       </div>
 
@@ -94,7 +102,7 @@ export function Hero() {
           <motion.div
             aria-hidden
             style={{ opacity: glow }}
-            className="absolute -inset-x-10 -bottom-16 top-1/3 -z-10 rounded-[40px] bg-[radial-gradient(closest-side,rgba(178,205,189,0.22),transparent)] blur-3xl"
+            className="absolute -inset-x-10 -bottom-16 top-1/3 -z-10 rounded-[40px] bg-[radial-gradient(closest-side,rgba(111,220,166,0.2),transparent)] blur-3xl"
           />
           <div className="overflow-hidden rounded-[14px] bg-[#1f1f1f] shadow-[0_0_0_1px_rgba(255,255,255,0.09),0_1px_0_0_rgba(255,255,255,0.08)_inset,0_50px_140px_-40px_rgba(0,0,0,0.95)] sm:rounded-[18px]">
             <Video
@@ -142,5 +150,41 @@ export function Hero() {
         </motion.div>
       </div>
     </section>
+  );
+}
+
+/** One word of the headline, lifting out of a blur in turn. */
+function Word({ children, delay }: { children: string; delay: number }) {
+  const reduce = useReducedMotion();
+  return (
+    <motion.span
+      initial={reduce ? false : { opacity: 0, y: 22, filter: 'blur(10px)' }}
+      animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+      transition={{ duration: 1, delay, ease: EASE }}
+      className="headline-gradient inline-block"
+    >
+      {children}
+    </motion.span>
+  );
+}
+
+/** A small app-icon tile set into the headline, flipping in to face you. */
+function LogoTile({ src, tint, delay }: { src: string; tint: 'codex' | 'claude'; delay: number }) {
+  const reduce = useReducedMotion();
+  return (
+    <span className="inline-block [perspective:400px]" aria-hidden>
+      <motion.span
+        initial={reduce ? false : { opacity: 0, rotateY: -80, scale: 0.7 }}
+        animate={{ opacity: 1, rotateY: 0, scale: 1 }}
+        transition={{ duration: 1.1, delay, ease: EASE }}
+        className={`mx-[0.16em] inline-flex size-[0.74em] translate-y-[0.06em] items-center justify-center rounded-[0.22em] shadow-[0_1px_0_rgba(255,255,255,0.14)_inset,0_12px_30px_-10px_rgba(0,0,0,0.9)] ring-1 ${
+          tint === 'claude'
+            ? 'bg-[linear-gradient(160deg,#3a2621,#1d1614)] ring-claude/30'
+            : 'bg-[linear-gradient(160deg,#2c2e2d,#161717)] ring-white/12'
+        }`}
+      >
+        <img src={src} alt="" className="size-[0.42em]" />
+      </motion.span>
+    </span>
   );
 }
