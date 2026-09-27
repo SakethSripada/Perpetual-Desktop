@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const VERTEX = `
   attribute vec2 position;
@@ -45,21 +45,30 @@ const FRAGMENT = `
 /**
  * A slowly moving aurora behind the hero. It never follows the cursor. To
  * stay light it renders at half size (the bands are soft, so it looks the
- * same), draws at most 30 times a second, pauses off screen, and holds still
- * with reduced motion.
+ * same), pauses off screen, and holds still with reduced motion.
+ *
+ * Each mount draws into its own canvas and hands the GPU context back when
+ * it unmounts, so hot reloads and remounts never pile up contexts until the
+ * browser starts dropping them. If the browser does reclaim it, it rebuilds.
  */
 export function SoftAurora({ className = '' }: { className?: string }) {
-  const canvas = useRef<HTMLCanvasElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const [generation, setGeneration] = useState(0);
 
   useEffect(() => {
-    const el = canvas.current;
-    const gl = el?.getContext('webgl', {
+    const host = box.current;
+    if (!host) return;
+    const el = document.createElement('canvas');
+    el.className =
+      'absolute inset-0 h-full w-full opacity-0 transition-opacity duration-1000 data-[ready]:opacity-100';
+    host.appendChild(el);
+    const gl = el.getContext('webgl', {
       antialias: false,
       alpha: false,
       depth: false,
       powerPreference: 'low-power',
     });
-    if (!el || !gl) return;
+    if (!gl) return () => el.remove();
 
     const shader = (type: number, src: string) => {
       const s = gl.createShader(type)!;
@@ -71,7 +80,6 @@ export function SoftAurora({ className = '' }: { className?: string }) {
     gl.attachShader(program, shader(gl.VERTEX_SHADER, VERTEX));
     gl.attachShader(program, shader(gl.FRAGMENT_SHADER, FRAGMENT));
     gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
     gl.useProgram(program);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
@@ -85,9 +93,10 @@ export function SoftAurora({ className = '' }: { className?: string }) {
     const resize = () => {
       const w = Math.max(1, Math.round(el.clientWidth / 2));
       const h = Math.max(1, Math.round(el.clientHeight / 2));
-      if (el.width === w && el.height === h) return;
-      el.width = w;
-      el.height = h;
+      if (el.width !== w || el.height !== h) {
+        el.width = w;
+        el.height = h;
+      }
       gl.viewport(0, 0, w, h);
       gl.uniform2f(res, w, h);
     };
@@ -95,18 +104,16 @@ export function SoftAurora({ className = '' }: { className?: string }) {
     sized.observe(el);
     resize();
 
+    // Start where the bands are already lit rather than in a dark lull.
+    const OFFSET = 6;
     const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const begin = performance.now();
     let visible = true;
     let raf = 0;
-    let last = -Infinity;
     const draw = (now: number) => {
-      if (now - last >= 1000 / 30) {
-        last = now;
-        gl.uniform1f(time, still ? 12 : (now - begin) / 1000);
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
-        el.dataset.ready = '';
-      }
+      gl.uniform1f(time, OFFSET + (still ? 6 : (now - begin) / 1000));
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      el.dataset.ready = '';
       if (!still && visible) raf = requestAnimationFrame(draw);
     };
     const seen = new IntersectionObserver(([e]) => {
@@ -115,19 +122,31 @@ export function SoftAurora({ className = '' }: { className?: string }) {
       if (visible) raf = requestAnimationFrame(draw);
     });
     seen.observe(el);
+
+    const lost = (e: Event) => {
+      e.preventDefault();
+      cancelAnimationFrame(raf);
+    };
+    const restored = () => setGeneration((g) => g + 1);
+    el.addEventListener('webglcontextlost', lost);
+    el.addEventListener('webglcontextrestored', restored);
+
     return () => {
       seen.disconnect();
       sized.disconnect();
       cancelAnimationFrame(raf);
+      el.removeEventListener('webglcontextlost', lost);
+      el.removeEventListener('webglcontextrestored', restored);
+      gl.getExtension('WEBGL_lose_context')?.loseContext();
+      el.remove();
     };
-  }, []);
+  }, [generation]);
 
   return (
-    <div aria-hidden className={`bg-[#030509] ${className}`}>
-      <canvas
-        ref={canvas}
-        className="h-full w-full opacity-0 transition-opacity duration-1000 data-[ready]:opacity-100"
-      />
-    </div>
+    <div
+      ref={box}
+      aria-hidden
+      className={`bg-[#030509] bg-[radial-gradient(ellipse_70%_55%_at_65%_35%,rgba(156,142,184,0.22),transparent_70%)] ${className}`}
+    />
   );
 }
