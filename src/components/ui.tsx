@@ -3,10 +3,18 @@ import * as Dialog from '@radix-ui/react-dialog';
 import * as Menu from '@radix-ui/react-dropdown-menu';
 import * as Switch from '@radix-ui/react-switch';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { X, ChevronDown, Check, ChevronRight, LoaderCircle, MoreHorizontal } from 'lucide-react';
+import {
+  X,
+  ChevronDown,
+  Check,
+  ChevronRight,
+  LoaderCircle,
+  MoreHorizontal,
+  Trash2,
+} from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 import type {
   ButtonHTMLAttributes,
   ComponentProps,
@@ -42,7 +50,7 @@ export function Button({
         variant === 'primary' && 'bg-ink text-surface hover:bg-ink/85',
         variant === 'secondary' && 'border border-line bg-elevated text-ink hover:bg-hover',
         variant === 'ghost' && 'text-muted hover:bg-hover hover:text-ink',
-        variant === 'danger' && 'bg-danger text-white hover:bg-danger/85',
+        variant === 'danger' && 'bg-danger-strong text-white hover:bg-danger-strong/90',
         className,
       )}
       {...props}
@@ -241,6 +249,7 @@ export function Modal({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 animate-fade-in bg-black/50" />
         <Dialog.Content
+          onOpenAutoFocus={focusFirstField}
           style={{ width: `min(${width}px, calc(100vw - 32px))` }}
           className="fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100vh-48px)] -translate-x-1/2 -translate-y-1/2 animate-pop-in flex-col overflow-hidden rounded-2xl border border-line bg-surface text-ink shadow-2xl outline-none"
         >
@@ -272,6 +281,15 @@ export function Modal({
   );
 }
 
+/** Focus a dialog's first field, or the dialog itself, never its close button. */
+function focusFirstField(event: Event) {
+  const content = event.currentTarget as HTMLElement;
+  event.preventDefault();
+  const field = content.querySelector<HTMLElement>('input:not([type=hidden]), textarea');
+  (field ?? content).focus();
+}
+
+/** A short yes-or-no question before an action, destructive or not. */
 export function Confirm({
   open,
   onOpenChange,
@@ -279,6 +297,7 @@ export function Confirm({
   description,
   confirmLabel,
   danger,
+  icon,
   onConfirm,
 }: {
   open: boolean;
@@ -287,32 +306,74 @@ export function Confirm({
   description?: ReactNode;
   confirmLabel: string;
   danger?: boolean;
+  /** Shown in a badge beside the title. Defaults to a trash can for danger. */
+  icon?: ReactNode;
   onConfirm: () => Promise<unknown> | void;
 }) {
+  const [busy, setBusy] = useState(false);
+  const confirm = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onConfirm();
+      onOpenChange(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const badge = icon ?? (danger ? <Trash2 size={16} /> : null);
   return (
-    <Modal
-      open={open}
-      onOpenChange={onOpenChange}
-      title={title}
-      description={description}
-      width={420}
-      footer={
-        <>
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            variant={danger ? 'danger' : 'primary'}
-            onClick={async () => {
-              await onConfirm();
-              onOpenChange(false);
-            }}
-          >
-            {confirmLabel}
-          </Button>
-        </>
-      }
-    />
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 animate-fade-in bg-black/55" />
+        <Dialog.Content
+          onOpenAutoFocus={focusFirstField}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.defaultPrevented) {
+              e.preventDefault();
+              void confirm();
+            }
+          }}
+          style={{ width: 'min(380px, calc(100vw - 32px))' }}
+          className="fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 animate-pop-in rounded-2xl border border-line bg-elevated p-5 text-ink shadow-[0_24px_70px_-20px_rgba(0,0,0,0.6)] outline-none"
+        >
+          <div className="flex gap-3.5">
+            {badge && (
+              <span
+                className={cn(
+                  'flex size-9 shrink-0 items-center justify-center rounded-full',
+                  danger ? 'bg-danger/12 text-danger' : 'bg-hover text-muted',
+                )}
+              >
+                {badge}
+              </span>
+            )}
+            <div className="min-w-0 pt-0.5">
+              <Dialog.Title className="text-[15px] font-semibold tracking-[-0.01em]">
+                {title}
+              </Dialog.Title>
+              <Dialog.Description
+                className={cn('text-[13px] leading-5 text-muted', description && 'mt-1')}
+              >
+                {description}
+              </Dialog.Description>
+            </div>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant={danger ? 'danger' : 'primary'}
+              loading={busy}
+              onClick={() => void confirm()}
+            >
+              {confirmLabel}
+            </Button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 

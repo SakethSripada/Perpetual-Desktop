@@ -163,11 +163,14 @@ export function TaskList({
       <Confirm
         open={!!remove}
         onOpenChange={(v) => !v && setRemove(null)}
-        title={`Delete "${remove?.title || 'this task'}"?`}
+        title="Delete this task?"
         description={
-          remove && LIVE.includes(remove.status)
-            ? 'This task is still running. Deleting it stops the task and removes its conversation.'
-            : 'Its conversation and history will be deleted. Changes already applied to your projects stay.'
+          <>
+            <span className="text-ink">{remove?.title || 'Untitled task'}</span>
+            {remove && LIVE.includes(remove.status)
+              ? ' is still running. Deleting it stops the task and removes its conversation.'
+              : ' and its conversation will be deleted. Changes you applied to projects stay.'}
+          </>
         }
         confirmLabel={remove && LIVE.includes(remove.status) ? 'Stop and delete' : 'Delete'}
         danger

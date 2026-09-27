@@ -19,6 +19,7 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
+  --color-danger-strong: var(--danger-strong);
   --color-switch: var(--switch);
   --animate-fade-in: fade-in 120ms ease-out;
   --animate-pop-in: pop-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -49,6 +50,7 @@
   --success: #86c79f;
   --warning: #e3b96f;
   --danger: #ec8b80;
+  --danger-strong: #d4453a;
   --switch: #2f9e5b;
 }
 :root[data-theme='light'] {
@@ -66,6 +68,7 @@
   --success: #2c8052;
   --warning: #9a6410;
   --danger: #bf3b2f;
+  --danger-strong: #c0392b;
   --switch: #1f8a4c;
 }
 @layer base {

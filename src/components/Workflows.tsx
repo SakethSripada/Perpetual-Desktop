@@ -292,11 +292,14 @@ export function Workflows({ onSelect }: { onSelect: (id: string) => void }) {
       <Confirm
         open={!!remove}
         onOpenChange={(v) => !v && setRemove(null)}
-        title={`Delete "${remove?.title ?? 'step'}"?`}
+        title="Delete this step?"
         description={
-          remove?.thread_id
-            ? 'Its task and conversation will be deleted too.'
-            : 'The step will be removed from the workflow.'
+          <>
+            <span className="text-ink">{remove?.title || 'Untitled step'}</span>
+            {remove?.thread_id
+              ? ' and its task conversation will be deleted.'
+              : ' will be removed from the workflow.'}
+          </>
         }
         confirmLabel="Delete"
         danger

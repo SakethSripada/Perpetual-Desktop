@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, GitCompare, ChevronRight, RefreshCw, GitBranch } from 'lucide-react';
+import { X, GitCompare, ChevronRight, RefreshCw, GitBranch, GitMerge } from 'lucide-react';
 import { toast } from 'sonner';
 import { action, rpc } from '../lib/api';
 import { errorMessage } from '../lib/format';
@@ -135,6 +135,7 @@ export function Review({ thread, onClose }: { thread: AgentThread; onClose: () =
         title="Apply these changes?"
         description="They'll be copied into your project folder. If you've edited the same files there, nothing is changed and you'll see which files conflict."
         confirmLabel="Apply changes"
+        icon={<GitMerge size={16} />}
         onConfirm={() =>
           action(async () => {
             const outcome = await rpc<AgentThreadApplyResult>('apply_thread_changes', {

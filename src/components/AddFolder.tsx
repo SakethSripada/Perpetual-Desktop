@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { FolderGit2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { native, rpc } from '../lib/api';
 import { errorMessage } from '../lib/format';
@@ -65,6 +66,7 @@ export function useAddFolder() {
         </>
       }
       confirmLabel="Set up Git"
+      icon={<FolderGit2 size={16} />}
       onConfirm={async () => {
         const path = pending!;
         try {

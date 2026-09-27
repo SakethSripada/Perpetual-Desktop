@@ -372,6 +372,7 @@ export function Accounts({
         title="Use earned reset credits?"
         description="When this account reaches its limit, Perpetual may redeem a usage-reset credit you've already earned. It never buys credits."
         confirmLabel="Allow"
+        icon={<Gift size={16} />}
         onConfirm={() => update(credits!.id, { use_credits: true })}
       />
     </>
