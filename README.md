@@ -67,6 +67,7 @@ Set `PERPETUAL_DATA_DIR` to run the app against a separate data folder while dev
 - `src/`: the interface (React, TypeScript, Tailwind, Radix UI)
 - `src-tauri/`: the native shell: window, IPC, provider sign-in, and shutdown
 - `crates/`: the engine, database, provider adapters, Git worktrees, and protocol
+- `landing/`: the website. `npm run record` in that folder re-records its product videos from the real interface with a scripted demo backend.
 
 ## Contributing and security
 

@@ -51,3 +51,18 @@ jobs:
       - run: cargo check -p perpetual-desktop --locked
       - run: cargo test -p am-core --lib --locked
       - run: cargo test -p am-vcs -p am-proto --locked
+
+  landing:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: landing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: landing/package-lock.json
+      - run: npm ci
+      - run: npm run build
