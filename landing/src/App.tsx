@@ -1,6 +1,7 @@
 import { Footer } from './components/Footer';
 import { Hero } from './components/Hero';
 import { Nav } from './components/Nav';
+import { Story } from './components/Story';
 
 export function App() {
   return (
@@ -8,6 +9,7 @@ export function App() {
       <Nav />
       <main>
         <Hero />
+        <Story />
       </main>
       <Footer />
     </div>
