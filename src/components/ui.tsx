@@ -128,7 +128,7 @@ export function Toggle({
       disabled={disabled}
       checked={checked}
       onCheckedChange={onChange}
-      className="h-5 w-9 shrink-0 rounded-full bg-line p-0.5 transition-colors data-[state=checked]:bg-accent disabled:opacity-45"
+      className="h-5 w-9 shrink-0 rounded-full bg-line p-0.5 transition-colors data-[state=checked]:bg-switch disabled:opacity-45"
     >
       <Switch.Thumb className="block h-4 w-4 rounded-full bg-white shadow-sm transition-transform data-[state=checked]:translate-x-4" />
     </Switch.Root>
