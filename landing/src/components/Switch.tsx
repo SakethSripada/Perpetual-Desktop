@@ -41,13 +41,16 @@ export function Switch() {
           <span className="muted-gradient">Same thread.</span>
         </h2>
         <p className="mx-auto mt-5 max-w-xl text-[17px] leading-7 text-balance text-muted">
-          Switch agents or models mid-task without losing the conversation. New models appear as soon as your CLI has
-          them.
+          Switch agents or models mid-task without losing the conversation. New models appear as
+          soon as your CLI has them.
         </p>
       </Reveal>
 
       <Reveal delay={0.1} className="mt-10 flex justify-center">
-        <div className="relative flex rounded-full bg-white/[0.04] p-1 ring-1 ring-line" role="presentation">
+        <div
+          className="relative flex rounded-full bg-white/[0.04] p-1 ring-1 ring-line"
+          role="presentation"
+        >
           {AGENTS.map((a) => (
             <div
               key={a.id}
@@ -62,7 +65,11 @@ export function Switch() {
                   transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                 />
               )}
-              <img src={a.logo} alt="" className={`size-4 transition-opacity ${a.id === agent ? '' : 'opacity-50'}`} />
+              <img
+                src={a.logo}
+                alt=""
+                className={`size-4 transition-opacity ${a.id === agent ? '' : 'opacity-50'}`}
+              />
               {a.name}
             </div>
           ))}

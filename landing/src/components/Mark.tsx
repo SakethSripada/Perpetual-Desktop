@@ -1,7 +1,14 @@
 /** Perpetual's mark, drawn with the current text color. */
 export function Mark({ size = 22, className }: { size?: number; className?: string }) {
   return (
-    <svg aria-hidden viewBox="0 0 64 64" width={size} height={size} fill="none" className={className}>
+    <svg
+      aria-hidden
+      viewBox="0 0 64 64"
+      width={size}
+      height={size}
+      fill="none"
+      className={className}
+    >
       <path
         d="M32 12v40M17 22l15 14 15-14M14 49l18-17 18 17"
         stroke="currentColor"

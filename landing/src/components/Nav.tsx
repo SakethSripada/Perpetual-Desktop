@@ -18,7 +18,10 @@ export function Nav() {
       }`}
     >
       <nav className="mx-auto flex h-16 max-w-6xl items-center gap-8 px-5 sm:px-8">
-        <a href="#top" className="flex items-center gap-2.5 text-[15px] font-semibold tracking-tight">
+        <a
+          href="#top"
+          className="flex items-center gap-2.5 text-[15px] font-semibold tracking-tight"
+        >
           <Mark size={19} />
           Perpetual
         </a>

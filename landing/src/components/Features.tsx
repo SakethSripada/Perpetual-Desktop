@@ -20,7 +20,11 @@ export function Features() {
               title="Every account in one place"
               body="Sign in to as many Codex and Claude accounts as you have, set the order they’re used in, and see when each one resets."
             />
-            <Screen name="accounts" start={1.6} label="Opening the account switcher, then the Accounts page with usage, reset times, and switching order" />
+            <Screen
+              name="accounts"
+              start={1.6}
+              label="Opening the account switcher, then the Accounts page with usage, reset times, and switching order"
+            />
           </TiltCard>
         </Reveal>
 
@@ -50,7 +54,13 @@ export function Features() {
               title="You decide what runs"
               body="Pick how much each task may do on its own. Anything beyond that waits for you, with the exact command and why it’s needed."
             />
-            <Screen name="approval" start={2.2} crop align="bottom" label="Claude asking to run npm install, then continuing once allowed" />
+            <Screen
+              name="approval"
+              start={2.2}
+              crop
+              align="bottom"
+              label="Claude asking to run npm install, then continuing once allowed"
+            />
           </TiltCard>
         </Reveal>
       </div>
@@ -99,7 +109,10 @@ function Screen({
 
 function Orbit() {
   return (
-    <div className="relative flex min-h-[260px] flex-1 items-center justify-center [perspective:700px]" aria-hidden>
+    <div
+      className="relative flex min-h-[260px] flex-1 items-center justify-center [perspective:700px]"
+      aria-hidden
+    >
       <div className="absolute size-[270px] rounded-full [transform:rotateX(70deg)] ring-1 ring-white/10" />
       <div className="absolute size-[180px] rounded-full [transform:rotateX(70deg)] ring-1 ring-white/[0.06]" />
       <motion.div
@@ -172,7 +185,15 @@ function StepDot({ state }: { state: 'done' | 'running' | 'waiting' }): ReactNod
   if (state === 'done')
     return (
       <span className="flex size-[23px] shrink-0 items-center justify-center rounded-full bg-good/15 text-good">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3"
+          strokeLinecap="round"
+        >
           <path d="M20 6L9 17l-5-5" />
         </svg>
       </span>
@@ -188,7 +209,16 @@ function StepDot({ state }: { state: 'done' | 'running' | 'waiting' }): ReactNod
 
 function FolderIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
     </svg>
   );

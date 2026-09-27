@@ -52,10 +52,13 @@ export function Hero() {
           {...rise(0.18)}
           className="mx-auto mt-6 max-w-xl text-[17px] leading-7 text-muted sm:text-[18px]"
         >
-          A desktop workspace for your coding agents. When an account reaches its usage limit, the task keeps going on
-          the next one.
+          A desktop workspace for your coding agents. When an account reaches its usage limit, the
+          task keeps going on the next one.
         </motion.p>
-        <motion.div {...rise(0.3)} className="mt-9 flex flex-wrap items-center justify-center gap-3">
+        <motion.div
+          {...rise(0.3)}
+          className="mt-9 flex flex-wrap items-center justify-center gap-3"
+        >
           <DownloadButton />
           <a
             href={REPO}
@@ -65,7 +68,10 @@ export function Hero() {
             View on GitHub
           </a>
         </motion.div>
-        <motion.div {...rise(0.4)} className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[13px] whitespace-nowrap text-faint">
+        <motion.div
+          {...rise(0.4)}
+          className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[13px] whitespace-nowrap text-faint"
+        >
           <span>Free and open source</span>
           <span className="hidden h-3 w-px bg-line-strong sm:block" />
           <span className="flex items-center gap-2">
@@ -107,10 +113,20 @@ export function Hero() {
             style={{ y: nearY, translateZ: 90 }}
             className="absolute bottom-[18%] -left-6 hidden items-center gap-2.5 rounded-full bg-[#232423]/90 py-2.5 pr-4 pl-3 text-[13px] text-muted shadow-[0_0_0_1px_rgba(255,255,255,0.09),0_24px_60px_-20px_rgba(0,0,0,0.9)] backdrop-blur-md lg:flex"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--color-warn)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--color-warn)"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <path d="M3 12a9 9 0 0 1 15.3-6.4L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.3 6.4L3 16M3 21v-5h5" />
             </svg>
-            Account limit reached; continuing with <span className="text-ink">work@northwind.dev</span>
+            Account limit reached; continuing with{' '}
+            <span className="text-ink">work@northwind.dev</span>
           </motion.div>
 
           <motion.div
@@ -134,7 +150,16 @@ export function Hero() {
                 <div className="text-ink">work@northwind.dev</div>
                 <div className="text-[11px] text-faint">Pro</div>
               </div>
-              <svg className="ml-auto" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+              <svg
+                className="ml-auto"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+              >
                 <path d="M20 6L9 17l-5-5" />
               </svg>
             </div>

@@ -91,7 +91,9 @@ export function Story() {
                 <h2 className="text-[30px] leading-[1.08] font-semibold tracking-[-0.035em] text-balance text-ink sm:text-[38px]">
                   {s.title}
                 </h2>
-                <p className="mt-4 max-w-sm text-[16px] leading-7 text-muted sm:text-[17px]">{s.body}</p>
+                <p className="mt-4 max-w-sm text-[16px] leading-7 text-muted sm:text-[17px]">
+                  {s.body}
+                </p>
               </motion.div>
             ))}
             <div className="absolute bottom-0 left-0 hidden gap-1.5 lg:flex">
@@ -139,7 +141,10 @@ function Timeline({ progress }: { progress: MotionValue<string> }) {
   return (
     <div className="mx-auto mt-6 max-w-md px-1" aria-hidden>
       <div className="relative h-[3px] rounded-full bg-white/[0.08]">
-        <motion.div style={{ width: progress }} className="absolute inset-y-0 left-0 rounded-full bg-sage/70" />
+        <motion.div
+          style={{ width: progress }}
+          className="absolute inset-y-0 left-0 rounded-full bg-sage/70"
+        />
         <span
           className="absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-warn shadow-[0_0_0_3px_var(--color-bg)]"
           style={{ left: `${limit * 100}%` }}
@@ -148,4 +153,3 @@ function Timeline({ progress }: { progress: MotionValue<string> }) {
     </div>
   );
 }
-

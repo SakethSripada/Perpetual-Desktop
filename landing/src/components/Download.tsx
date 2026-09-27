@@ -15,7 +15,10 @@ export function Download() {
   const [platform, setPlatform] = useState<Platform>('other');
   useEffect(() => setPlatform(detectPlatform()), []);
 
-  const { scrollYProgress } = useScroll({ target: section, offset: ['start end', 'center center'] });
+  const { scrollYProgress } = useScroll({
+    target: section,
+    offset: ['start end', 'center center'],
+  });
   const p = useSpring(scrollYProgress, { stiffness: 120, damping: 26, mass: 0.5 });
   // The icon swings up out of the floor and squares up to face you.
   const rotateX = useTransform(p, [0, 1], [reduce ? 0 : 58, 0]);
@@ -26,7 +29,11 @@ export function Download() {
   const primary = platform === 'other' ? 'windows' : platform;
 
   return (
-    <section id="download" ref={section} className="relative isolate overflow-hidden px-5 pt-10 pb-24 sm:px-8 sm:pb-28">
+    <section
+      id="download"
+      ref={section}
+      className="relative isolate overflow-hidden px-5 pt-10 pb-24 sm:px-8 sm:pb-28"
+    >
       <motion.div
         aria-hidden
         style={{ opacity: glow }}
@@ -34,7 +41,10 @@ export function Download() {
       />
 
       <div className="flex justify-center [perspective:900px]">
-        <motion.div style={{ rotateX, rotateY, y }} className="relative [transform-style:preserve-3d]">
+        <motion.div
+          style={{ rotateX, rotateY, y }}
+          className="relative [transform-style:preserve-3d]"
+        >
           <motion.img
             src="/icon.png"
             alt="Perpetual app icon"
@@ -94,7 +104,17 @@ export function Download() {
           href={RELEASES}
           className="inline-flex items-center gap-2 text-center text-[13px] text-balance text-faint transition-colors hover:text-muted"
         >
-          <svg className="hidden shrink-0 sm:block" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            className="hidden shrink-0 sm:block"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             <path d="m9 12 2 2 4-4" />
           </svg>

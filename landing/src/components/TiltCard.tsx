@@ -1,11 +1,23 @@
 import { useRef, type ReactNode } from 'react';
-import { motion, useMotionTemplate, useMotionValue, useReducedMotion, useSpring } from 'motion/react';
+import {
+  motion,
+  useMotionTemplate,
+  useMotionValue,
+  useReducedMotion,
+  useSpring,
+} from 'motion/react';
 
 /**
  * A card that leans toward the pointer and catches a soft light where it is.
  * Flat on touch screens and with reduced motion.
  */
-export function TiltCard({ children, className = '' }: { children: ReactNode; className?: string }) {
+export function TiltCard({
+  children,
+  className = '',
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   const card = useRef<HTMLDivElement>(null);
   const reduce = useReducedMotion();
   const rx = useSpring(0, { stiffness: 180, damping: 22 });

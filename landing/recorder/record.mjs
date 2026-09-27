@@ -102,7 +102,9 @@ class Recorder {
     await sleep(hold * 1000);
     const wall = this.elapsed();
     // One more paint so the last frame's duration can be measured.
-    await this.page.evaluate(() => document.body.style.setProperty('--rec-tick', String(Math.random())));
+    await this.page.evaluate(() =>
+      document.body.style.setProperty('--rec-tick', String(Math.random())),
+    );
     await sleep(120);
     await this.client.send('Page.stopScreencast');
     const dir = path.join(work, name);
@@ -119,20 +121,96 @@ class Recorder {
     fs.writeFileSync(path.join(dir, 'frames.txt'), list.join('\n'));
     encode(dir, name);
     const span = this.frames.at(-1).t + hold;
-    console.log(`${name}: ${this.frames.length} frames, ${span.toFixed(1)}s of video for ${wall.toFixed(1)}s of wall time`);
+    console.log(
+      `${name}: ${this.frames.length} frames, ${span.toFixed(1)}s of video for ${wall.toFixed(1)}s of wall time`,
+    );
   }
 }
 
 function encode(dir, name) {
-  const common = ['-y', '-f', 'concat', '-safe', '0', '-i', path.join(dir, 'frames.txt'), '-vf', 'fps=60,format=yuv420p', '-an'];
-  run('ffmpeg', [...common, '-c:v', 'libx264', '-preset', 'slow', '-crf', '15', '-tune', 'animation', '-movflags', '+faststart', path.join(outDir, `${name}.mp4`)]);
-  run('ffmpeg', [...common, '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '28', '-row-mt', '1', '-deadline', 'good', path.join(outDir, `${name}.webm`)]);
+  const common = [
+    '-y',
+    '-f',
+    'concat',
+    '-safe',
+    '0',
+    '-i',
+    path.join(dir, 'frames.txt'),
+    '-vf',
+    'fps=60,format=yuv420p',
+    '-an',
+  ];
+  run('ffmpeg', [
+    ...common,
+    '-c:v',
+    'libx264',
+    '-preset',
+    'slow',
+    '-crf',
+    '15',
+    '-tune',
+    'animation',
+    '-movflags',
+    '+faststart',
+    path.join(outDir, `${name}.mp4`),
+  ]);
+  run('ffmpeg', [
+    ...common,
+    '-c:v',
+    'libvpx-vp9',
+    '-b:v',
+    '0',
+    '-crf',
+    '28',
+    '-row-mt',
+    '1',
+    '-deadline',
+    'good',
+    path.join(outDir, `${name}.webm`),
+  ]);
   // The site starts some clips past their lead-in; the poster matches that frame.
-  run('ffmpeg', ['-y', '-ss', String(POSTER_AT[name] ?? 0), '-i', path.join(outDir, `${name}.mp4`), '-frames:v', '1', '-q:v', '3', path.join(outDir, `${name}.jpg`)]);
+  run('ffmpeg', [
+    '-y',
+    '-ss',
+    String(POSTER_AT[name] ?? 0),
+    '-i',
+    path.join(outDir, `${name}.mp4`),
+    '-frames:v',
+    '1',
+    '-q:v',
+    '3',
+    path.join(outDir, `${name}.jpg`),
+  ]);
   // Scroll-scrubbed videos need frequent keyframes to seek smoothly. Scroll
   // sets the pace, so 30 fps at the size they're shown is enough.
   if (SCRUB.includes(name))
-    run('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', path.join(dir, 'frames.txt'), '-vf', 'fps=30,scale=1600:1000:flags=lanczos,format=yuv420p', '-an', '-c:v', 'libx264', '-preset', 'slow', '-crf', '22', '-g', '6', '-keyint_min', '6', '-bf', '0', '-movflags', '+faststart', path.join(outDir, `${name}-scrub.mp4`)]);
+    run('ffmpeg', [
+      '-y',
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      path.join(dir, 'frames.txt'),
+      '-vf',
+      'fps=30,scale=1600:1000:flags=lanczos,format=yuv420p',
+      '-an',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'slow',
+      '-crf',
+      '22',
+      '-g',
+      '6',
+      '-keyint_min',
+      '6',
+      '-bf',
+      '0',
+      '-movflags',
+      '+faststart',
+      path.join(outDir, `${name}-scrub.mp4`),
+    ]);
 }
 
 function run(cmd, args) {
@@ -143,7 +221,10 @@ function run(cmd, args) {
 // ---- Driving the UI -------------------------------------------------------
 
 async function center(page, selector) {
-  const el = typeof selector === 'string' ? await page.waitForSelector(selector, { visible: true }) : selector;
+  const el =
+    typeof selector === 'string'
+      ? await page.waitForSelector(selector, { visible: true })
+      : selector;
   const box = await el.boundingBox();
   return { x: box.x + box.width / 2, y: box.y + box.height / 2, el };
 }
@@ -196,12 +277,18 @@ const scenes = {
     await sleep(900);
     await click(page, 'textarea[aria-label="Message"]');
     marks.typing = rec.elapsed();
-    await type(page, 'Add retries with exponential backoff to the API client, and cover them with tests.');
+    await type(
+      page,
+      'Add retries with exponential backoff to the API client, and cover them with tests.',
+    );
     await sleep(350);
     await page.keyboard.press('Enter');
     marks.working = rec.elapsed();
     await moveTo(page, WIDTH * 0.95, HEIGHT * 0.55, 900);
-    await page.waitForFunction(() => document.body.textContent.includes('Account limit reached'), { timeout: 60000, polling: 50 });
+    await page.waitForFunction(() => document.body.textContent.includes('Account limit reached'), {
+      timeout: 60000,
+      polling: 50,
+    });
     marks.limit = rec.elapsed();
     await waitForStatus(page, 'Finished');
     marks.done = rec.elapsed();
@@ -211,17 +298,43 @@ const scenes = {
   // Switch the same task to Claude and a newer model, then ask a follow-up.
   async claude(page, rec, marks) {
     await sleep(600);
-    await click(page, await byText(page, `.//button[.//span[normalize-space()='Codex'] and ancestor::div[contains(@class,'rounded-2xl')]]`));
+    await click(
+      page,
+      await byText(
+        page,
+        `.//button[.//span[normalize-space()='Codex'] and ancestor::div[contains(@class,'rounded-2xl')]]`,
+      ),
+    );
     await sleep(350);
-    await click(page, await byText(page, `.//*[@role='menuitemradio' and contains(normalize-space(), 'Claude Code')]`), { ms: 450 });
+    await click(
+      page,
+      await byText(
+        page,
+        `.//*[@role='menuitemradio' and contains(normalize-space(), 'Claude Code')]`,
+      ),
+      { ms: 450 },
+    );
     await sleep(450);
-    await click(page, await byText(page, `.//button[.//span[normalize-space()='Claude Code'] and ancestor::div[contains(@class,'rounded-2xl')]]`));
+    await click(
+      page,
+      await byText(
+        page,
+        `.//button[.//span[normalize-space()='Claude Code'] and ancestor::div[contains(@class,'rounded-2xl')]]`,
+      ),
+    );
     await sleep(300);
-    const model = await byText(page, `.//*[@role='menuitem' and contains(normalize-space(), 'Model')]`);
+    const model = await byText(
+      page,
+      `.//*[@role='menuitem' and contains(normalize-space(), 'Model')]`,
+    );
     const m = await center(page, model);
     await moveTo(page, m.x, m.y, 450);
     await sleep(500);
-    await click(page, await byText(page, `.//*[@role='menuitemradio' and normalize-space()='Claude Opus 5.5']`), { ms: 500 });
+    await click(
+      page,
+      await byText(page, `.//*[@role='menuitemradio' and normalize-space()='Claude Opus 5.5']`),
+      { ms: 500 },
+    );
     marks.switched = rec.elapsed();
     await sleep(400);
     await click(page, 'textarea[aria-label="Message"]', { ms: 500 });
@@ -241,7 +354,10 @@ const scenes = {
     await sleep(1800);
     await page.keyboard.press('Escape');
     await sleep(400);
-    await click(page, await byText(page, `.//aside//button[contains(normalize-space(), 'Accounts')]`));
+    await click(
+      page,
+      await byText(page, `.//aside//button[contains(normalize-space(), 'Accounts')]`),
+    );
     await sleep(1800);
     await moveTo(page, WIDTH * 0.62, HEIGHT * 0.52, 900);
     await sleep(1400);
@@ -255,10 +371,16 @@ const scenes = {
     await type(page, 'Add a 10 second timeout to every request.');
     await page.keyboard.press('Enter');
     await moveTo(page, WIDTH * 0.95, HEIGHT * 0.55, 900);
-    await page.waitForSelector('xpath/.//button[normalize-space()="Allow"]', { visible: true, timeout: 30000 });
+    await page.waitForSelector('xpath/.//button[normalize-space()="Allow"]', {
+      visible: true,
+      timeout: 30000,
+    });
     marks.asked = rec.elapsed();
     await sleep(1400);
-    await click(page, await byText(page, `.//button[normalize-space()='Allow']`), { ms: 800, pause: 350 });
+    await click(page, await byText(page, `.//button[normalize-space()='Allow']`), {
+      ms: 800,
+      pause: 350,
+    });
     await waitForStatus(page, 'Finished');
     marks.done = rec.elapsed();
   },
@@ -276,7 +398,12 @@ const browser = await puppeteer.launch({
   executablePath: chrome,
   headless: true,
   // Without this, headless screencasts arrive at 1x even with a 2x viewport.
-  args: ['--force-color-profile=srgb', '--hide-scrollbars', '--disable-lcd-text', `--force-device-scale-factor=${SCALE}`],
+  args: [
+    '--force-color-profile=srgb',
+    '--hide-scrollbars',
+    '--disable-lcd-text',
+    `--force-device-scale-factor=${SCALE}`,
+  ],
 });
 const chapters = fs.existsSync(path.join(outDir, 'chapters.json'))
   ? JSON.parse(fs.readFileSync(path.join(outDir, 'chapters.json'), 'utf8'))
@@ -284,7 +411,10 @@ const chapters = fs.existsSync(path.join(outDir, 'chapters.json'))
 try {
   const page = await browser.newPage();
   await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: SCALE });
-  await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }, { name: 'prefers-reduced-motion', value: 'no-preference' }]);
+  await page.emulateMediaFeatures([
+    { name: 'prefers-color-scheme', value: 'dark' },
+    { name: 'prefers-reduced-motion', value: 'no-preference' },
+  ]);
   await page.evaluateOnNewDocument(fs.readFileSync(path.join(here, 'demo-backend.js'), 'utf8'));
   await page.evaluateOnNewDocument(cursorScript);
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle0' });
@@ -301,14 +431,18 @@ try {
     await scenes[name](page, rec, marks);
     if (keep) {
       await rec.stop(name);
-      chapters[name] = Object.fromEntries(Object.entries(marks).map(([k, v]) => [k, +v.toFixed(2)]));
+      chapters[name] = Object.fromEntries(
+        Object.entries(marks).map(([k, v]) => [k, +v.toFixed(2)]),
+      );
     }
-    if (wanted.length && order.slice(order.indexOf(name) + 1).every((n) => !wanted.includes(n))) break;
+    if (wanted.length && order.slice(order.indexOf(name) + 1).every((n) => !wanted.includes(n)))
+      break;
   }
 } finally {
   await browser.close();
   server.kill();
-  if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(server.pid), '/t', '/f'], { stdio: 'ignore' });
+  if (process.platform === 'win32')
+    spawnSync('taskkill', ['/pid', String(server.pid), '/t', '/f'], { stdio: 'ignore' });
 }
 fs.writeFileSync(path.join(outDir, 'chapters.json'), JSON.stringify(chapters, null, 2) + '\n');
 console.log('Chapters:', chapters);

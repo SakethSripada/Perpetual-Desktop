@@ -18,7 +18,10 @@ export const Video = forwardRef<
     className?: string;
     label: string;
   }
->(function Video({ name, autoPlay = true, loop = true, variant = '', start = 0, className, label }, ref) {
+>(function Video(
+  { name, autoPlay = true, loop = true, variant = '', start = 0, className, label },
+  ref,
+) {
   const video = useRef<HTMLVideoElement>(null);
   const [near, setNear] = useState(false);
   useImperativeHandle(ref, () => video.current!);

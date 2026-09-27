@@ -14,7 +14,13 @@
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---- State -------------------------------------------------------------
-  const project = { id: 'p1', name: 'Workbench', description: null, created_at: ago(9000), updated_at: ago(10) };
+  const project = {
+    id: 'p1',
+    name: 'Workbench',
+    description: null,
+    created_at: ago(9000),
+    updated_at: ago(10),
+  };
   const repos = [
     {
       id: 'r1',
@@ -81,17 +87,76 @@
     weekly: { used_percent: week, reset_at: later(60 * 24 * 3) },
   });
   const agents = [
-    { kind: 'codex', installed: true, authenticated: true, version: '0.161.0', binary_path: 'codex', availability: 'available', reset_at: null, last_checked: now(), usage: usage(64, 31) },
-    { kind: 'claude_code', installed: true, authenticated: true, version: '2.1.290', binary_path: 'claude', availability: 'available', reset_at: null, last_checked: now(), usage: usage(22, 18) },
+    {
+      kind: 'codex',
+      installed: true,
+      authenticated: true,
+      version: '0.161.0',
+      binary_path: 'codex',
+      availability: 'available',
+      reset_at: null,
+      last_checked: now(),
+      usage: usage(64, 31),
+    },
+    {
+      kind: 'claude_code',
+      installed: true,
+      authenticated: true,
+      version: '2.1.290',
+      binary_path: 'claude',
+      availability: 'available',
+      reset_at: null,
+      last_checked: now(),
+      usage: usage(22, 18),
+    },
   ];
-  const model = (id, label, reasoning) => ({ id, label, aliases: [], family: null, default: false, available: true, source: 'cli', reasoning, default_reasoning: null });
+  const model = (id, label, reasoning) => ({
+    id,
+    label,
+    aliases: [],
+    family: null,
+    default: false,
+    available: true,
+    source: 'cli',
+    reasoning,
+    default_reasoning: null,
+  });
   const codexEffort = ['low', 'medium', 'high', 'xhigh'];
   const claudeEffort = ['low', 'medium', 'high', 'xhigh', 'max'];
   const models = [
-    { agent: 'codex', default_model: null, default_reasoning: null, reasoning: codexEffort, binary_path: 'codex', version: '0.161.0', source: 'codex_app_server', detected_at: now(), error: null,
-      models: [model('gpt-6-astra', 'GPT-6-Astra', codexEffort), model('gpt-6-sol', 'GPT-6-Sol', codexEffort), model('gpt-5.6-sol', 'GPT-5.6-Sol', codexEffort)] },
-    { agent: 'claude_code', default_model: null, default_reasoning: null, reasoning: claudeEffort, binary_path: 'claude', version: '2.1.290', source: 'claude_cli', detected_at: now(), error: null,
-      models: [model('claude-fable-5-1', 'Claude Fable 5.1', claudeEffort), model('claude-opus-5-5', 'Claude Opus 5.5', claudeEffort), model('claude-sonnet-5', 'Claude Sonnet 5', claudeEffort), model('claude-haiku-4-5', 'Claude Haiku 4.5', [])] },
+    {
+      agent: 'codex',
+      default_model: null,
+      default_reasoning: null,
+      reasoning: codexEffort,
+      binary_path: 'codex',
+      version: '0.161.0',
+      source: 'codex_app_server',
+      detected_at: now(),
+      error: null,
+      models: [
+        model('gpt-6-astra', 'GPT-6-Astra', codexEffort),
+        model('gpt-6-sol', 'GPT-6-Sol', codexEffort),
+        model('gpt-5.6-sol', 'GPT-5.6-Sol', codexEffort),
+      ],
+    },
+    {
+      agent: 'claude_code',
+      default_model: null,
+      default_reasoning: null,
+      reasoning: claudeEffort,
+      binary_path: 'claude',
+      version: '2.1.290',
+      source: 'claude_cli',
+      detected_at: now(),
+      error: null,
+      models: [
+        model('claude-fable-5-1', 'Claude Fable 5.1', claudeEffort),
+        model('claude-opus-5-5', 'Claude Opus 5.5', claudeEffort),
+        model('claude-sonnet-5', 'Claude Sonnet 5', claudeEffort),
+        model('claude-haiku-4-5', 'Claude Haiku 4.5', []),
+      ],
+    },
   ];
   const thread = (title, status, agent, minutes, extra = {}) => ({
     id: id('t'),
@@ -168,7 +233,18 @@
     return ev;
   };
   const startTurn = (t, agent, accountId) => {
-    const turn = { id: id('turn'), thread_id: t.id, agent_kind: agent, agent_session_id: null, state: 'running', permission: 'workspace_write', execution_backend: 'host', sandbox_name: null, started_at: now(), ended_at: null };
+    const turn = {
+      id: id('turn'),
+      thread_id: t.id,
+      agent_kind: agent,
+      agent_session_id: null,
+      state: 'running',
+      permission: 'workspace_write',
+      execution_backend: 'host',
+      sandbox_name: null,
+      started_at: now(),
+      ended_at: null,
+    };
     if (!turns.has(t.id)) turns.set(t.id, []);
     turns.get(t.id).push(turn);
     t.active_agent = agent;
@@ -194,12 +270,23 @@
     const call = id('call');
     push(t, turn, 'tool', 'tool_use', name, { call_id: call, input });
     await wait(ms);
-    push(t, turn, 'tool', 'tool_result', result.split('\n')[0], { call_id: call, ok, summary: result });
+    push(t, turn, 'tool', 'tool_result', result.split('\n')[0], {
+      call_id: call,
+      ok,
+      summary: result,
+    });
     if (file) push(t, turn, 'app', 'file_changed', file, {});
     await wait(180);
   };
   const act = (t, kind, payload) => {
-    activity.unshift({ id: id('act'), project_id: 'p1', task_id: t.id, kind, payload: { thread_id: t.id, ...payload }, ts: now() });
+    activity.unshift({
+      id: id('act'),
+      project_id: 'p1',
+      task_id: t.id,
+      kind,
+      payload: { thread_id: t.id, ...payload },
+      ts: now(),
+    });
     appEvent('activity', {});
   };
   const finish = (t) => {
@@ -211,23 +298,52 @@
   const scenarios = {
     async codex(t, turn) {
       await wait(700);
-      await stream(t, turn, "I'll check how requests are made today, then wrap the fetch layer with retries.");
+      await stream(
+        t,
+        turn,
+        "I'll check how requests are made today, then wrap the fetch layer with retries.",
+      );
       await wait(300);
-      await tool(t, turn, 'Read', { file_path: 'src/api/client.ts' }, 'export async function request(path: string, init?: RequestInit) {');
-      await tool(t, turn, 'Search', { pattern: 'fetch(' }, 'src/api/client.ts:18\nsrc/api/upload.ts:42');
-      await tool(t, turn, 'Edit', { file_path: 'src/api/retry.ts' }, 'Created src/api/retry.ts', { ms: 900, file: 'Added src/api/retry.ts' });
-      await tool(t, turn, 'Edit', { file_path: 'src/api/client.ts' }, 'Updated src/api/client.ts', { ms: 800, file: 'Modified src/api/client.ts' });
+      await tool(
+        t,
+        turn,
+        'Read',
+        { file_path: 'src/api/client.ts' },
+        'export async function request(path: string, init?: RequestInit) {',
+      );
+      await tool(
+        t,
+        turn,
+        'Search',
+        { pattern: 'fetch(' },
+        'src/api/client.ts:18\nsrc/api/upload.ts:42',
+      );
+      await tool(t, turn, 'Edit', { file_path: 'src/api/retry.ts' }, 'Created src/api/retry.ts', {
+        ms: 900,
+        file: 'Added src/api/retry.ts',
+      });
+      await tool(t, turn, 'Edit', { file_path: 'src/api/client.ts' }, 'Updated src/api/client.ts', {
+        ms: 800,
+        file: 'Modified src/api/client.ts',
+      });
       // The account runs out mid-task; Perpetual moves the task to the next account.
       await wait(500);
       const limited = accounts.find((a) => a.id === 'a1');
       limited.availability = 'limited';
       limited.reset_at = later(134);
       markActive();
-      act(t, 'thread.account_switched', { from_agent: 'codex', to_agent: 'codex', account_id: 'a2' });
+      act(t, 'thread.account_switched', {
+        from_agent: 'codex',
+        to_agent: 'codex',
+        account_id: 'a2',
+      });
       const next = startTurn(t, 'codex', 'a2');
       refresh();
       await wait(1600);
-      await tool(t, next, 'Command', { command: 'npm test -- api' }, '✓ 42 tests passed (6 new)', { ms: 1500, file: 'Added src/api/retry.test.ts' });
+      await tool(t, next, 'Command', { command: 'npm test -- api' }, '✓ 42 tests passed (6 new)', {
+        ms: 1500,
+        file: 'Added src/api/retry.test.ts',
+      });
       await wait(300);
       await stream(
         t,
@@ -239,9 +355,22 @@
     },
     async claude(t, turn) {
       await wait(700);
-      await stream(t, turn, "I'll read the new retry code and look for cases the tests don't cover.");
-      await tool(t, turn, 'Read', { file_path: 'src/api/retry.ts' }, 'export async function withRetry<T>(fn: () => Promise<T>) {');
-      await tool(t, turn, 'Edit', { file_path: 'src/api/retry.ts' }, 'Updated src/api/retry.ts', { ms: 900, file: 'Modified src/api/retry.ts' });
+      await stream(
+        t,
+        turn,
+        "I'll read the new retry code and look for cases the tests don't cover.",
+      );
+      await tool(
+        t,
+        turn,
+        'Read',
+        { file_path: 'src/api/retry.ts' },
+        'export async function withRetry<T>(fn: () => Promise<T>) {',
+      );
+      await tool(t, turn, 'Edit', { file_path: 'src/api/retry.ts' }, 'Updated src/api/retry.ts', {
+        ms: 900,
+        file: 'Modified src/api/retry.ts',
+      });
       await wait(250);
       await stream(
         t,
@@ -273,8 +402,20 @@
       window.__demo.pendingApproval = async () => {
         t.status = 'running';
         touch(t);
-        await tool(t, turn, 'Command', { command: 'npm install p-timeout' }, 'added 1 package in 1.2s', { ms: 1100 });
-        await stream(t, turn, 'Added a 10 second timeout to every request, with a clear error when it fires.', 120);
+        await tool(
+          t,
+          turn,
+          'Command',
+          { command: 'npm install p-timeout' },
+          'added 1 package in 1.2s',
+          { ms: 1100 },
+        );
+        await stream(
+          t,
+          turn,
+          'Added a 10 second timeout to every request, with a clear error when it fires.',
+          120,
+        );
         finish(t);
       };
     },
@@ -313,14 +454,19 @@
       return null;
     },
     create_agent_thread: (input) => {
-      const t = thread(input.title, 'draft', input.preferred_agent ?? 'codex', 0, { objective: input.objective });
+      const t = thread(input.title, 'draft', input.preferred_agent ?? 'codex', 0, {
+        objective: input.objective,
+      });
       threads.unshift(t);
       appEvent('agent_thread_created', clone(t));
       return t;
     },
     update_agent_thread: ({ id: tid, patch }) => {
       const t = threads.find((x) => x.id === tid);
-      Object.assign(t, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+      Object.assign(
+        t,
+        Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)),
+      );
       return t;
     },
     send_thread_message: ({ thread_id, agent, message }) => {
@@ -365,7 +511,10 @@
 
   window.isTauri = true;
   window.__TAURI_INTERNALS__ = {
-    metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } },
+    metadata: {
+      currentWindow: { label: 'main' },
+      currentWebview: { windowLabel: 'main', label: 'main' },
+    },
     invoke,
     transformCallback(fn) {
       const cb = cbSeq++;

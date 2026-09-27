@@ -3,7 +3,13 @@ import { PLATFORM_NAME, RELEASES, detectPlatform, type Platform } from '../lib/s
 import { AppleLogo, WindowsLogo } from './Mark';
 
 /** The primary call to action, labelled for the visitor's own platform. */
-export function DownloadButton({ size = 'lg', className = '' }: { size?: 'sm' | 'lg'; className?: string }) {
+export function DownloadButton({
+  size = 'lg',
+  className = '',
+}: {
+  size?: 'sm' | 'lg';
+  className?: string;
+}) {
   const [platform, setPlatform] = useState<Platform>('other');
   useEffect(() => setPlatform(detectPlatform()), []);
   const small = size === 'sm';
@@ -16,7 +22,11 @@ export function DownloadButton({ size = 'lg', className = '' }: { size?: 'sm' | 
     >
       {platform === 'windows' && <WindowsLogo size={small ? 12 : 15} />}
       {platform === 'mac' && <AppleLogo size={small ? 13 : 16} />}
-      {small ? 'Download' : platform === 'other' ? 'Download Perpetual' : `Download for ${PLATFORM_NAME[platform]}`}
+      {small
+        ? 'Download'
+        : platform === 'other'
+          ? 'Download Perpetual'
+          : `Download for ${PLATFORM_NAME[platform]}`}
     </a>
   );
 }
