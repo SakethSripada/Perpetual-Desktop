@@ -3,29 +3,23 @@ export function Mark({ size = 22, className }: { size?: number; className?: stri
   return (
     <svg
       aria-hidden
-      viewBox="8 8 48 48"
+      viewBox="0 0 64 64"
       width={size}
       height={size}
       fill="none"
       className={className}
     >
-      <defs>
-        <mask id="mark-cut">
-          <rect width="64" height="64" fill="white" />
-          <circle cx="45.44" cy="18.56" r="9.4" fill="black" />
-          <circle cx="18.56" cy="45.44" r="9.4" fill="black" />
-        </mask>
-      </defs>
-      <circle
-        cx="32"
-        cy="32"
-        r="19"
+      <path
+        d="M32 12v40M17 22l15 14 15-14M14 49l18-17 18 17"
         stroke="currentColor"
-        strokeWidth="6.8"
-        mask="url(#mark-cut)"
+        strokeWidth="7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
-      <circle cx="45.44" cy="18.56" r="7" fill="currentColor" />
-      <circle cx="18.56" cy="45.44" r="6.2" fill="currentColor" />
+      <circle cx="32" cy="12" r="6" fill="currentColor" />
+      <circle cx="32" cy="34" r="7" fill="currentColor" />
+      <circle cx="14" cy="49" r="6" fill="currentColor" />
+      <circle cx="50" cy="49" r="6" fill="currentColor" />
     </svg>
   );
 }
