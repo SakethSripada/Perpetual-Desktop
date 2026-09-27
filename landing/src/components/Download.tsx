@@ -37,7 +37,7 @@ export function Download() {
       <motion.div
         aria-hidden
         style={{ opacity: glow }}
-        className="absolute top-0 left-1/2 -z-10 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,rgba(111,220,166,0.13),transparent)] blur-2xl"
+        className="absolute top-0 left-1/2 -z-10 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,rgba(178,205,189,0.14),transparent)] blur-2xl"
       />
 
       <div className="flex justify-center [perspective:900px]">
@@ -79,7 +79,7 @@ export function Download() {
             <a
               key={id}
               href={RELEASES}
-              className="inline-flex h-12 items-center gap-2.5 rounded-full bg-ink px-6 text-[15px] font-medium text-bg shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_34px_-10px_rgba(111,220,166,0.45)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_16px_44px_-10px_rgba(111,220,166,0.6)]"
+              className="inline-flex h-12 items-center gap-2.5 rounded-full bg-ink px-6 text-[15px] font-medium text-bg shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_30px_-12px_rgba(255,255,255,0.35)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_16px_40px_-12px_rgba(255,255,255,0.45)]"
             >
               <Logo size={16} />
               Download for {label}
@@ -105,7 +105,7 @@ export function Download() {
           className="inline-flex items-center gap-2 text-center text-[13px] text-balance text-faint transition-colors hover:text-muted"
         >
           <svg
-            className="hidden shrink-0 text-accent sm:block"
+            className="hidden shrink-0 sm:block"
             width="14"
             height="14"
             viewBox="0 0 24 24"

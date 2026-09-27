@@ -16,7 +16,7 @@ export function DownloadButton({
   return (
     <a
       href={RELEASES}
-      className={`group relative inline-flex items-center justify-center gap-2 rounded-full bg-ink font-medium text-bg shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_34px_-10px_rgba(111,220,166,0.45)] transition-[transform,box-shadow] duration-300 ease-out hover:-translate-y-px hover:shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_16px_44px_-10px_rgba(111,220,166,0.6)] active:translate-y-0 ${
+      className={`group relative inline-flex items-center justify-center gap-2 rounded-full bg-ink font-medium text-bg shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_30px_-12px_rgba(255,255,255,0.35)] transition-[transform,box-shadow] duration-300 ease-out hover:-translate-y-px hover:shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_16px_40px_-12px_rgba(255,255,255,0.45)] active:translate-y-0 ${
         small ? 'h-8 px-3.5 text-[13px]' : 'h-12 px-6 text-[15px]'
       } ${className}`}
     >

@@ -17,8 +17,6 @@ export function Features() {
         <Reveal className="lg:col-span-4">
           <TiltCard className="h-full">
             <Copy
-              tone="accent"
-              icon={ICONS.accounts}
               title="Every account in one place"
               body="Sign in to as many Codex and Claude accounts as you have, set the order they’re used in, and see when each one resets."
             />
@@ -33,8 +31,6 @@ export function Features() {
         <Reveal delay={0.08} className="lg:col-span-2">
           <TiltCard className="h-full">
             <Copy
-              tone="teal"
-              icon={ICONS.local}
               title="Stays on your machine"
               body="No servers and no telemetry. Perpetual drives the CLIs you already have, with your code and sign-ins kept on your computer."
             />
@@ -45,8 +41,6 @@ export function Features() {
         <Reveal className="lg:col-span-2">
           <TiltCard className="h-full">
             <Copy
-              tone="violet"
-              icon={ICONS.workflows}
               title="Workflows"
               body="Chain tasks into a workflow, and choose the folder each step runs in."
             />
@@ -57,8 +51,6 @@ export function Features() {
         <Reveal delay={0.08} className="lg:col-span-4">
           <TiltCard className="h-full">
             <Copy
-              tone="amber"
-              icon={ICONS.approvals}
               title="You decide what runs"
               body="Pick how much each task may do on its own. Anything beyond that waits for you, with the exact command and why it’s needed."
             />
@@ -76,71 +68,9 @@ export function Features() {
   );
 }
 
-const TONES = {
-  accent: 'bg-accent/12 text-accent ring-accent/20',
-  teal: 'bg-teal/12 text-teal ring-teal/20',
-  violet: 'bg-[#a99bff]/12 text-[#b7abff] ring-[#a99bff]/20',
-  amber: 'bg-warn/12 text-warn ring-warn/20',
-} as const;
-
-const ICONS = {
-  accounts: (
-    <>
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
-    </>
-  ),
-  local: (
-    <>
-      <rect x="3" y="11" width="18" height="11" rx="2" />
-      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-    </>
-  ),
-  workflows: (
-    <>
-      <rect x="3" y="3" width="7" height="7" rx="1.5" />
-      <rect x="14" y="14" width="7" height="7" rx="1.5" />
-      <path d="M6.5 10v3.5a2 2 0 0 0 2 2H14" />
-    </>
-  ),
-  approvals: (
-    <>
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-      <path d="m9 12 2 2 4-4" />
-    </>
-  ),
-};
-
-function Copy({
-  title,
-  body,
-  icon,
-  tone,
-}: {
-  title: string;
-  body: string;
-  icon: ReactNode;
-  tone: keyof typeof TONES;
-}) {
+function Copy({ title, body }: { title: string; body: string }) {
   return (
     <div className="relative z-10 p-7 pb-7 sm:p-8 sm:pb-8">
-      <span
-        className={`mb-5 flex size-9 items-center justify-center rounded-[10px] ring-1 ${TONES[tone]}`}
-      >
-        <svg
-          width="17"
-          height="17"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.9"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          {icon}
-        </svg>
-      </span>
       <h3 className="text-[19px] font-semibold tracking-[-0.02em] text-ink">{title}</h3>
       <p className="mt-2 max-w-md text-[15px] leading-6 text-muted">{body}</p>
     </div>
@@ -270,8 +200,8 @@ function StepDot({ state }: { state: 'done' | 'running' | 'waiting' }): ReactNod
     );
   if (state === 'running')
     return (
-      <span className="relative flex size-[23px] shrink-0 items-center justify-center rounded-full bg-card ring-1 ring-accent/40">
-        <span className="size-2 animate-pulse rounded-full bg-accent" />
+      <span className="relative flex size-[23px] shrink-0 items-center justify-center rounded-full bg-card ring-1 ring-sage/40">
+        <span className="size-2 animate-pulse rounded-full bg-sage" />
       </span>
     );
   return <span className="size-[23px] shrink-0 rounded-full bg-card ring-1 ring-white/12" />;
