@@ -101,7 +101,7 @@ export function Story() {
                 <span
                   key={s.title}
                   className={`h-1 rounded-full transition-all duration-500 ${
-                    i === step ? 'w-8 bg-ink' : 'w-3 bg-white/15'
+                    i === step ? 'w-8 bg-accent' : 'w-3 bg-white/15'
                   }`}
                 />
               ))}
@@ -112,7 +112,7 @@ export function Story() {
             <motion.div style={{ rotateY, rotateX }} className="relative">
               <div
                 aria-hidden
-                className="absolute -inset-10 -z-10 rounded-[48px] bg-[radial-gradient(closest-side,rgba(178,205,189,0.12),transparent)] blur-2xl"
+                className="absolute -inset-10 -z-10 rounded-[48px] bg-[radial-gradient(closest-side,rgba(111,220,166,0.10),transparent)] blur-2xl"
               />
               <div className="overflow-hidden rounded-[14px] bg-[#1f1f1f] shadow-[0_0_0_1px_rgba(255,255,255,0.09),0_40px_120px_-40px_rgba(0,0,0,0.95)]">
                 <Video
@@ -143,7 +143,7 @@ function Timeline({ progress }: { progress: MotionValue<string> }) {
       <div className="relative h-[3px] rounded-full bg-white/[0.08]">
         <motion.div
           style={{ width: progress }}
-          className="absolute inset-y-0 left-0 rounded-full bg-sage/70"
+          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-accent/40 to-accent"
         />
         <span
           className="absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-warn shadow-[0_0_0_3px_var(--color-bg)]"

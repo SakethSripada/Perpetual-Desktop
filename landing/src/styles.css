@@ -64,7 +64,14 @@
 }
 /* The one colored phrase in a headline: mint into teal, with a slow sheen. */
 .accent-gradient {
-  background: linear-gradient(100deg, #9ef0c4 0%, #5fd69f 28%, #e6fff1 46%, #5fd69f 62%, #56c8c1 100%);
+  background: linear-gradient(
+    100deg,
+    #9ef0c4 0%,
+    #5fd69f 28%,
+    #e6fff1 46%,
+    #5fd69f 62%,
+    #56c8c1 100%
+  );
   background-size: 220% 100%;
   -webkit-background-clip: text;
   background-clip: text;
