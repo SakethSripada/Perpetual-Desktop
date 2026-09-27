@@ -25,9 +25,9 @@
     {
       id: 'r1',
       project_id: 'p1',
-      name: 'northwind-api',
+      name: 'web-app',
       kind: 'local',
-      local_path: '/Users/maya/code/northwind-api',
+      local_path: '/Users/dev/code/web-app',
       remote_url: null,
       default_branch: 'main',
       created_at: ago(9000),
@@ -51,9 +51,9 @@
     detail: null,
   });
   const accounts = [
-    account('a1', 'codex', 'Default', 'maya@northwind.dev', 'pro', 'system'),
-    account('a2', 'codex', 'Work', 'work@northwind.dev', 'pro', 'isolated_cli'),
-    account('a3', 'claude_code', 'Default', 'maya@northwind.dev', 'max', 'system'),
+    account('a1', 'codex', 'Personal', null, 'pro', 'system'),
+    account('a2', 'codex', 'Work', null, 'pro', 'isolated_cli'),
+    account('a3', 'claude_code', 'Personal', null, 'max', 'system'),
   ];
   const markActive = () => {
     const seen = new Set();
@@ -390,7 +390,7 @@
         kind: 'command',
         tool_name: 'shell',
         command: ['npm', 'install', 'p-timeout'],
-        cwd: '/Users/maya/code/northwind-api',
+        cwd: '/Users/dev/code/web-app',
         input: {},
         reason: 'Installing packages changes package.json and the lockfile.',
         created_at: now(),
@@ -505,7 +505,7 @@
     if (cmd === 'plugin:event|unlisten') return null;
     if (cmd === 'plugin:window|is_maximized') return false;
     if (cmd === 'plugin:app|version') return '0.1.0';
-    if (cmd === 'data_dir') return '/Users/maya/Library/Application Support/dev.perpetual.desktop';
+    if (cmd === 'data_dir') return '/Users/dev/Library/Application Support/dev.perpetual.desktop';
     return null;
   };
 

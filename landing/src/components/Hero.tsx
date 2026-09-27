@@ -119,12 +119,12 @@ export function Hero() {
               Codex
             </div>
             <div className="rounded-lg px-2.5 py-1.5">
-              <div className="text-ink/90">maya@northwind.dev</div>
+              <div className="text-ink/90">Codex sign-in</div>
               <div className="text-[11px] text-warn">Limited until 4:15 PM</div>
             </div>
             <div className="flex items-center rounded-lg bg-white/[0.05] px-2.5 py-1.5">
               <div>
-                <div className="text-ink">work@northwind.dev</div>
+                <div className="text-ink">Work</div>
                 <div className="text-[11px] text-faint">Pro</div>
               </div>
               <svg

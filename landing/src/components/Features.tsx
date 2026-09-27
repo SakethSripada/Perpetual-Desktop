@@ -71,9 +71,9 @@ function Screen({ name, label, start }: { name: string; label: string; start?: n
 }
 
 const STEPS = [
-  { task: 'Update the API types', folder: 'northwind-api' },
-  { task: 'Regenerate the client', folder: 'northwind-web' },
-  { task: 'Run the end-to-end tests', folder: 'northwind-web' },
+  { task: 'Update the API types', folder: 'api-server' },
+  { task: 'Regenerate the client', folder: 'web-app' },
+  { task: 'Run the end-to-end tests', folder: 'web-app' },
 ];
 
 function WorkflowSteps() {
