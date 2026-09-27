@@ -1195,7 +1195,6 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn item_start_and_completion_share_the_item_id() {

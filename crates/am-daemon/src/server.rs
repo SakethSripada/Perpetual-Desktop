@@ -493,6 +493,10 @@ pub async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonRespon
             core.delete_agent_thread(&id, force).await.map_err(s)?;
             A::Unit
         }
+        Q::ReorderAgentThreads { ordered_ids } => {
+            core.reorder_agent_threads(ordered_ids).await.map_err(s)?;
+            A::Unit
+        }
         Q::AssignThreadRepos {
             thread_id,
             repo_ids,

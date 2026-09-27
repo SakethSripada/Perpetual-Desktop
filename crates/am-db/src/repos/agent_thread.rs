@@ -638,6 +638,21 @@ pub async fn delete_group(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
     Ok(())
 }
 
+/// Stores a user-chosen order: each listed thread gets its position (1-based).
+/// Threads not listed keep order 0, so new threads stay at the top.
+pub async fn set_order(pool: &SqlitePool, ordered_ids: &[String]) -> Result<(), DbError> {
+    let mut tx = pool.begin().await?;
+    for (index, id) in ordered_ids.iter().enumerate() {
+        sqlx::query("UPDATE agent_threads SET sort_order = ? WHERE id = ?")
+            .bind(index as i64 + 1)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
     sqlx::query("DELETE FROM agent_threads WHERE id = ?")
         .bind(id)

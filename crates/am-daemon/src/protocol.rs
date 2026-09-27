@@ -291,6 +291,10 @@ pub enum DaemonRequest {
         id: String,
         force: bool,
     },
+    /// Arrange threads in this order (first = top).
+    ReorderAgentThreads {
+        ordered_ids: Vec<String>,
+    },
     AssignThreadRepos {
         thread_id: String,
         repo_ids: Vec<String>,

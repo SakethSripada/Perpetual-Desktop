@@ -684,7 +684,6 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn tool_calls_and_results_share_the_provider_id() {

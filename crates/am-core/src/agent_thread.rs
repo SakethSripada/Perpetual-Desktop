@@ -197,6 +197,15 @@ impl AppCore {
         Ok(am_db::repos::agent_thread::get(&self.db.pool, id).await?)
     }
 
+    /// Saves the order the user arranged their threads in.
+    pub async fn reorder_agent_threads(&self, ordered_ids: Vec<String>) -> Result<(), CoreError> {
+        if ordered_ids.len() > 10_000 {
+            return Err(CoreError::Other("too many threads to reorder".into()));
+        }
+        am_db::repos::agent_thread::set_order(&self.db.pool, &ordered_ids).await?;
+        Ok(())
+    }
+
     pub async fn update_agent_thread(
         &self,
         id: &str,
