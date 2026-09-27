@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { motion, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react';
 import { REPO } from '../lib/site';
-import { LiquidGradient } from './LiquidGradient';
+import { SoftAurora } from './SoftAurora';
 import { DownloadButton } from './DownloadButton';
 import { GithubLogo } from './Mark';
 import { Video } from './Video';
@@ -33,7 +33,7 @@ export function Hero() {
     <section ref={section} className="relative isolate overflow-x-clip pt-36 pb-10 sm:pt-44">
       {/* Light behind the window, and a floor that recedes into it. */}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[1100px]">
-        <LiquidGradient className="absolute inset-x-0 top-0 h-[900px]" />
+        <SoftAurora className="absolute inset-x-0 top-0 h-[900px]" />
         {/* Fade into the page with a plain overlay rather than a mask, which
             would make the browser redraw the whole moving surface. */}
         <div className="absolute inset-x-0 top-[480px] h-[421px] bg-gradient-to-b from-transparent to-bg" />
