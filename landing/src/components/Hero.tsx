@@ -25,8 +25,7 @@ export function Hero() {
   const scale = useTransform(smooth, [0, 0.42], [reduce ? 1 : 0.9, 1]);
   const lift = useTransform(smooth, [0, 0.42], [0, -30]);
   const glow = useTransform(smooth, [0, 0.42], [0.45, 0.85]);
-  // Floating details drift at their own depth.
-  const nearY = useTransform(smooth, [0, 0.6], [0, -120]);
+  // The floating switcher drifts at its own depth.
   const farY = useTransform(smooth, [0, 0.6], [0, -60]);
 
   return (
@@ -104,30 +103,6 @@ export function Hero() {
               className="block aspect-[16/10] w-full"
             />
           </div>
-
-          <motion.div
-            aria-hidden
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 1, delay: 1.3, ease: EASE }}
-            style={{ y: nearY, translateZ: 90 }}
-            className="absolute bottom-[18%] -left-6 hidden items-center gap-2.5 rounded-full bg-[#232423]/90 py-2.5 pr-4 pl-3 text-[13px] text-muted shadow-[0_0_0_1px_rgba(255,255,255,0.09),0_24px_60px_-20px_rgba(0,0,0,0.9)] backdrop-blur-md lg:flex"
-          >
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="var(--color-warn)"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M3 12a9 9 0 0 1 15.3-6.4L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.3 6.4L3 16M3 21v-5h5" />
-            </svg>
-            Account limit reached; continuing with{' '}
-            <span className="text-ink">work@northwind.dev</span>
-          </motion.div>
 
           <motion.div
             aria-hidden
