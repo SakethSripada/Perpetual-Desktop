@@ -42,7 +42,7 @@ export function Nav() {
           Perpetual
         </a>
         <div
-          className={`hidden items-center text-[14px] text-muted transition-[gap] duration-500 md:flex ${
+          className={`hidden items-center text-[14px] text-white/75 transition-[gap] duration-500 md:flex ${
             floating ? 'mx-auto gap-1' : 'mr-auto gap-2'
           }`}
         >
@@ -60,7 +60,7 @@ export function Nav() {
           <a
             href={REPO}
             aria-label="Perpetual on GitHub"
-            className="flex size-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-white/[0.06] hover:text-ink"
+            className="flex size-9 items-center justify-center rounded-full text-white/75 transition-colors hover:bg-white/[0.06] hover:text-ink"
           >
             <GithubLogo />
           </a>

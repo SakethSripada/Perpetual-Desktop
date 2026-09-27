@@ -47,11 +47,11 @@ export function Hero() {
         >
           <span className="headline-gradient lg:whitespace-nowrap">Codex and Claude Code,</span>
           <br />
-          <span className="muted-gradient">without the stops.</span>
+          <span className="text-white/60">without the stops.</span>
         </motion.h1>
         <motion.p
           {...rise(0.18)}
-          className="mx-auto mt-6 max-w-xl text-[17px] leading-7 text-muted sm:text-[18px]"
+          className="mx-auto mt-6 max-w-xl text-[17px] leading-7 text-white/75 sm:text-[18px]"
         >
           A desktop workspace for your coding agents. When an account reaches its usage limit, the
           task keeps going on the next one.
@@ -63,7 +63,7 @@ export function Hero() {
           <DownloadButton />
           <a
             href={REPO}
-            className="inline-flex h-12 items-center gap-2 rounded-full px-5 text-[15px] font-medium text-muted ring-1 ring-line-strong transition-colors hover:bg-white/[0.04] hover:text-ink"
+            className="inline-flex h-12 items-center gap-2 rounded-full px-5 text-[15px] font-medium text-white/85 ring-1 ring-white/25 backdrop-blur-sm transition-colors hover:bg-white/[0.08] hover:text-white"
           >
             <GithubLogo size={16} />
             View on GitHub
@@ -71,7 +71,7 @@ export function Hero() {
         </motion.div>
         <motion.div
           {...rise(0.4)}
-          className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[13px] whitespace-nowrap text-faint"
+          className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[13px] whitespace-nowrap text-white/55"
         >
           <span>Free and open source</span>
           <span className="hidden h-3 w-px bg-line-strong sm:block" />
