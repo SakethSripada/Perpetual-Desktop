@@ -22,6 +22,8 @@ const SCALE = 2;
 const PORT = 4318;
 /** Scenes the website scrubs with scroll. */
 const SCRUB = ['hero'];
+// Keep in sync with the `start` the site gives each clip.
+const POSTER_AT = { accounts: 1.6, approval: 2.2 };
 
 const chrome =
   process.env.CHROME_PATH ??
@@ -125,7 +127,8 @@ function encode(dir, name) {
   const common = ['-y', '-f', 'concat', '-safe', '0', '-i', path.join(dir, 'frames.txt'), '-vf', 'fps=60,format=yuv420p', '-an'];
   run('ffmpeg', [...common, '-c:v', 'libx264', '-preset', 'slow', '-crf', '15', '-tune', 'animation', '-movflags', '+faststart', path.join(outDir, `${name}.mp4`)]);
   run('ffmpeg', [...common, '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '28', '-row-mt', '1', '-deadline', 'good', path.join(outDir, `${name}.webm`)]);
-  run('ffmpeg', ['-y', '-i', path.join(outDir, `${name}.mp4`), '-vf', 'select=eq(n\\,0)', '-frames:v', '1', '-q:v', '3', path.join(outDir, `${name}.jpg`)]);
+  // The site starts some clips past their lead-in; the poster matches that frame.
+  run('ffmpeg', ['-y', '-ss', String(POSTER_AT[name] ?? 0), '-i', path.join(outDir, `${name}.mp4`), '-frames:v', '1', '-q:v', '3', path.join(outDir, `${name}.jpg`)]);
   // Scroll-scrubbed videos need frequent keyframes to seek smoothly. Scroll
   // sets the pace, so 30 fps at the size they're shown is enough.
   if (SCRUB.includes(name))

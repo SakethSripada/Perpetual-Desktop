@@ -13,10 +13,12 @@ export const Video = forwardRef<
     loop?: boolean;
     /** Source file suffix, e.g. "-scrub" for the scroll-scrubbed variant. */
     variant?: string;
+    /** Seconds to skip at the start, on first play and on every loop. */
+    start?: number;
     className?: string;
     label: string;
   }
->(function Video({ name, autoPlay = true, loop = true, variant = '', className, label }, ref) {
+>(function Video({ name, autoPlay = true, loop = true, variant = '', start = 0, className, label }, ref) {
   const video = useRef<HTMLVideoElement>(null);
   const [near, setNear] = useState(false);
   useImperativeHandle(ref, () => video.current!);
@@ -35,13 +37,26 @@ export const Video = forwardRef<
       },
       { threshold: 0.35 },
     );
+    // Native looping always restarts at zero, so loop by hand past `start`.
+    const skip = () => {
+      if (start && el.currentTime < start) el.currentTime = start;
+    };
+    const restart = () => {
+      if (!start || !loop) return;
+      el.currentTime = start;
+      void el.play().catch(() => undefined);
+    };
+    el.addEventListener('loadedmetadata', skip);
+    el.addEventListener('ended', restart);
     load.observe(el);
     play.observe(el);
     return () => {
       load.disconnect();
       play.disconnect();
+      el.removeEventListener('loadedmetadata', skip);
+      el.removeEventListener('ended', restart);
     };
-  }, [autoPlay]);
+  }, [autoPlay, loop, start]);
 
   return (
     <video
@@ -51,7 +66,7 @@ export const Video = forwardRef<
       poster={`/media/${name}.jpg`}
       muted
       playsInline
-      loop={loop}
+      loop={loop && !start}
       preload={near ? 'auto' : 'none'}
     >
       {near && variant === '' && <source src={`/media/${name}.webm`} type="video/webm" />}
