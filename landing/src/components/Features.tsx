@@ -13,8 +13,8 @@ export function Features() {
         </h2>
       </Reveal>
 
-      <div className="mx-auto mt-10 grid max-w-[1180px] gap-4 lg:grid-cols-6">
-        <Reveal className="lg:col-span-4">
+      <div className="mx-auto mt-10 grid max-w-[1180px] gap-4 lg:grid-cols-3">
+        <Reveal className="lg:col-span-2 lg:row-span-2">
           <TiltCard className="h-full">
             <Copy
               title="Every account in one place"
@@ -28,17 +28,7 @@ export function Features() {
           </TiltCard>
         </Reveal>
 
-        <Reveal delay={0.08} className="lg:col-span-2">
-          <TiltCard className="h-full">
-            <Copy
-              title="Stays on your machine"
-              body="No servers and no telemetry. Perpetual drives the CLIs you already have, with your code and sign-ins kept on your computer."
-            />
-            <Orbit />
-          </TiltCard>
-        </Reveal>
-
-        <Reveal className="lg:col-span-2">
+        <Reveal delay={0.08}>
           <TiltCard className="h-full">
             <Copy
               title="Workflows"
@@ -48,18 +38,11 @@ export function Features() {
           </TiltCard>
         </Reveal>
 
-        <Reveal delay={0.08} className="lg:col-span-4">
+        <Reveal delay={0.16}>
           <TiltCard className="h-full">
             <Copy
-              title="You decide what runs"
-              body="Pick how much each task may do on its own. Anything beyond that waits for you, with the exact command and why it’s needed."
-            />
-            <Screen
-              name="approval"
-              start={2.2}
-              crop
-              align="bottom"
-              label="Claude asking to run npm install, then continuing once allowed"
+              title="Stays on your machine"
+              body="No servers and no telemetry. Perpetual drives the CLIs you already have, with your code and sign-ins kept on your computer."
             />
           </TiltCard>
         </Reveal>
@@ -77,71 +60,12 @@ function Copy({ title, body }: { title: string; body: string }) {
   );
 }
 
-/**
- * A recording shown as a window peeking in from the card's lower right.
- * `crop` trims the sidebar so the part that matters stays legible.
- */
-function Screen({
-  name,
-  label,
-  start,
-  crop = false,
-  align = 'top',
-}: {
-  name: string;
-  label: string;
-  start?: number;
-  crop?: boolean;
-  align?: 'top' | 'bottom';
-}) {
+/** A recording shown as a window peeking in from the card's lower right. */
+function Screen({ name, label, start }: { name: string; label: string; start?: number }) {
   return (
-    <div className="relative mt-auto ml-7 aspect-[16/8.6] overflow-hidden rounded-tl-[12px] bg-[#1f1f1f] shadow-[0_0_0_1px_rgba(255,255,255,0.08),-20px_-10px_60px_-20px_rgba(0,0,0,0.6)] sm:ml-8">
-      <Video
-        name={name}
-        label={label}
-        start={start}
-        className={`absolute max-w-none ${crop ? 'left-[-24%] w-[124%]' : 'left-0 w-full'} ${align === 'bottom' ? 'bottom-0' : 'top-0'}`}
-      />
+    <div className="relative mt-auto ml-7 aspect-[16/9.4] overflow-hidden rounded-tl-[12px] bg-[#1f1f1f] shadow-[0_0_0_1px_rgba(255,255,255,0.08),-20px_-10px_60px_-20px_rgba(0,0,0,0.6)] sm:ml-8">
+      <Video name={name} label={label} start={start} className="absolute top-0 left-0 w-full" />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-card/80 to-transparent" />
-    </div>
-  );
-}
-
-function Orbit() {
-  return (
-    <div
-      className="relative flex min-h-[260px] flex-1 items-center justify-center [perspective:700px]"
-      aria-hidden
-    >
-      <div className="absolute size-[270px] rounded-full [transform:rotateX(70deg)] ring-1 ring-white/10" />
-      <div className="absolute size-[180px] rounded-full [transform:rotateX(70deg)] ring-1 ring-white/[0.06]" />
-      <motion.div
-        className="absolute size-[270px] [transform-style:preserve-3d]"
-        style={{ rotateX: 70 }}
-        animate={{ rotateZ: 360 }}
-        transition={{ duration: 26, ease: 'linear', repeat: Infinity }}
-      >
-        {[
-          { src: '/brands/openai.svg', at: 'top-0 left-1/2' },
-          { src: '/brands/claude.svg', at: 'bottom-0 left-1/2' },
-        ].map((b) => (
-          <motion.div
-            key={b.src}
-            className={`absolute ${b.at} -translate-x-1/2 -translate-y-1/2 [transform-style:preserve-3d]`}
-            animate={{ rotateZ: -360 }}
-            transition={{ duration: 26, ease: 'linear', repeat: Infinity }}
-          >
-            <div className="flex size-9 items-center justify-center rounded-full bg-[#232423] shadow-[0_0_0_1px_rgba(255,255,255,0.1),0_10px_24px_-8px_rgba(0,0,0,0.9)] [transform:rotateX(-70deg)]">
-              <img src={b.src} alt="" className="size-4" />
-            </div>
-          </motion.div>
-        ))}
-      </motion.div>
-      <img
-        src="/icon.png"
-        alt=""
-        className="relative size-[88px] drop-shadow-[0_18px_30px_rgba(0,0,0,0.7)]"
-      />
     </div>
   );
 }
