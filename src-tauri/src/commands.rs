@@ -33,7 +33,7 @@ pub async fn sign_in(
     engine: State<'_, Engine>,
     account_id: String,
     tooling: bool,
-) -> Result<(), String> {
+) -> Result<&'static str, String> {
     let req = if tooling {
         DaemonRequest::ProviderAccountToolingLaunch { account_id }
     } else {
@@ -45,7 +45,43 @@ pub async fn sign_in(
         | DaemonResponse::ProviderAccountToolingLaunch(value) => value,
         _ => return Err("Unexpected sign-in response".into()),
     };
-    launch_terminal(launch, tooling)
+    let browser_sign_in = !tooling
+        && match (launch.agent, launch.args.as_slice()) {
+            (am_proto::AgentKind::Codex, [login]) => login == "login",
+            (am_proto::AgentKind::ClaudeCode, [auth, login]) => auth == "auth" && login == "login",
+            _ => false,
+        };
+    if browser_sign_in {
+        launch_browser_sign_in(launch)?;
+        Ok("browser")
+    } else {
+        launch_terminal(launch, tooling)?;
+        Ok("terminal")
+    }
+}
+
+/// The provider CLI owns the OAuth callback and opens the browser itself.
+/// Keep its process alive without attaching a visible console window.
+fn launch_browser_sign_in(launch: am_proto::ProviderAccountAuthLaunch) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+    let mut command = Command::new(&launch.binary);
+    command
+        .args(&launch.args)
+        .envs(launch.env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    tokio::task::spawn_blocking(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 #[cfg(windows)]

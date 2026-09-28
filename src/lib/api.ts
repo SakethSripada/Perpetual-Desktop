@@ -34,9 +34,14 @@ export async function action<T>(run: () => Promise<T>, success?: string): Promis
   }
 }
 
-/** Opens the provider's sign-in (or, with `tooling`, its interactive CLI) in a terminal. */
+/** Starts browser sign-in in the background, or opens interactive CLI tooling. */
 export async function signIn(accountId: string, tooling = false) {
   if (!native) throw new Error('Sign-in is available in the Perpetual desktop app.');
-  await invoke('sign_in', { accountId, tooling });
-  if (!tooling) toast.info('Finish signing in in the window that opened.');
+  const mode = await invoke<'browser' | 'terminal'>('sign_in', { accountId, tooling });
+  if (!tooling)
+    toast.info(
+      mode === 'browser'
+        ? 'Finish signing in in your browser.'
+        : 'Finish signing in in the window that opened.',
+    );
 }

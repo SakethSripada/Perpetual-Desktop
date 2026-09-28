@@ -52,7 +52,7 @@ False positives happen to new, unsigned, or rarely downloaded executables. If on
 What the app already avoids, so it doesn't look like malware:
 
 - It installs per user under `%LOCALAPPDATA%` and never asks for administrator rights.
-- Background helpers (git and the provider CLIs) run without flashing console windows. The only visible terminal is the one opened for a provider sign-in, when the user asks for it.
+- Background helpers (git and the provider CLIs) run without flashing console windows. Browser sign-in opens only the browser; interactive CLI tooling and Claude setup-token sign-in open a terminal when requested.
 - It doesn't use packers, obfuscation, or PowerShell execution-policy bypasses.
 - The webview may only open `https://` links in the browser and pick folders; all other native access goes through the app's own commands.
 - The binary carries full version information: product name, publisher, version, and copyright.
@@ -62,6 +62,7 @@ What the app already avoids, so it doesn't look like malware:
 - [ ] The Windows installer runs without administrator rights, and the Start menu shortcut launches the app.
 - [ ] On macOS, the app opens from Applications without a warning, and its window controls sit in the title bar.
 - [ ] On first launch, a signed-in Codex or Claude CLI appears in Accounts with its email.
+- [ ] Browser sign-in for Codex and Claude opens the browser without a terminal window, then the account becomes signed in.
 - [ ] A task runs on Codex and on Claude, and the reply streams in.
 - [ ] Choosing **Use** on another account moves the active account, and the next message uses it.
 - [ ] Changes from a task with a project appear in **Changes** and apply to the project.
