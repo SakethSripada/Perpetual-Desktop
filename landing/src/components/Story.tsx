@@ -6,14 +6,11 @@ import {
   useScroll,
   useSpring,
   useTransform,
-  type MotionValue,
 } from 'motion/react';
 import { Video } from './Video';
 
 /** Seconds into the recording where each part of the story ends. */
 const TIMELINE = [2.2, 13.2, 17.2, 21.5];
-const LIMIT_AT = 13.9;
-
 const STEPS = [
   {
     title: 'Describe the task.',
@@ -48,7 +45,6 @@ export function Story() {
   const progress = useSpring(scrollYProgress, { stiffness: 120, damping: 28, mass: 0.35 });
   const rotateY = useTransform(progress, [0, 1], [reduce ? 0 : -9, reduce ? 0 : -3]);
   const rotateX = useTransform(progress, [0, 1], [reduce ? 0 : 4, 0]);
-  const bar = useTransform(progress, [0, 1], ['0%', '100%']);
 
   // Seek only when scroll moves the target, and chase it after each seek
   // lands, so nothing runs while the page is still.
@@ -132,31 +128,10 @@ export function Story() {
                   className="block aspect-[16/10] w-full"
                 />
               </div>
-              <Timeline progress={bar} />
             </motion.div>
           </div>
         </div>
       </div>
     </section>
-  );
-}
-
-/** A slim scrubber under the window, with a mark where the limit hits. */
-function Timeline({ progress }: { progress: MotionValue<string> }) {
-  // Scroll is split evenly per step, so place the mark on the scroll scale.
-  const limit = (1 + (LIMIT_AT - TIMELINE[1]) / (TIMELINE[2] - TIMELINE[1])) / STEPS.length;
-  return (
-    <div className="mx-auto mt-6 max-w-md px-1" aria-hidden>
-      <div className="relative h-[3px] rounded-full bg-white/[0.08]">
-        <motion.div
-          style={{ width: progress }}
-          className="absolute inset-y-0 left-0 rounded-full bg-sage/70"
-        />
-        <span
-          className="absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-warn shadow-[0_0_0_3px_var(--color-bg)]"
-          style={{ left: `${limit * 100}%` }}
-        />
-      </div>
-    </div>
   );
 }
