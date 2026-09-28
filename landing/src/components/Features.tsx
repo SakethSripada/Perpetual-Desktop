@@ -1,5 +1,5 @@
-import { motion } from 'motion/react';
-import type { ReactNode } from 'react';
+import { AnimatePresence, motion, useInView, useReducedMotion } from 'motion/react';
+import { useEffect, useRef, useState } from 'react';
 import { Reveal } from './Reveal';
 import { TiltCard } from './TiltCard';
 import { Video } from './Video';
@@ -76,9 +76,52 @@ const STEPS = [
   { task: 'Run the end-to-end tests', folder: 'web-app' },
 ];
 
+type StepState = 'done' | 'running' | 'waiting';
+
 function WorkflowSteps() {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { amount: 0.5 });
+  const reduceMotion = useReducedMotion();
+  const [activeStep, setActiveStep] = useState(0);
+  const [phase, setPhase] = useState<'running' | 'done' | 'reset'>('running');
+
+  useEffect(() => {
+    if (!inView || reduceMotion) return;
+
+    const delay =
+      phase === 'running'
+        ? 1500
+        : phase === 'reset'
+          ? 400
+          : activeStep === STEPS.length - 1
+            ? 1400
+            : 550;
+    const timer = window.setTimeout(() => {
+      if (phase === 'running') {
+        setPhase('done');
+      } else if (phase === 'reset') {
+        setActiveStep(0);
+        setPhase('running');
+      } else if (activeStep === STEPS.length - 1) {
+        setPhase('reset');
+      } else {
+        setActiveStep(activeStep + 1);
+        setPhase('running');
+      }
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [activeStep, inView, phase, reduceMotion]);
+
+  const stepState = (index: number): StepState => {
+    if (reduceMotion) return 'done';
+    if (phase === 'reset') return 'waiting';
+    if (index < activeStep || (index === activeStep && phase === 'done')) return 'done';
+    return index === activeStep ? 'running' : 'waiting';
+  };
+
   return (
-    <div className="relative my-auto px-7 pb-8 sm:px-8" aria-hidden>
+    <div ref={ref} className="relative my-auto px-7 pb-8 sm:px-8" aria-hidden>
       <div className="absolute top-5 bottom-14 left-[calc(1.75rem+11px)] w-px bg-white/15 sm:left-[calc(2rem+11px)]" />
       <ol className="relative space-y-3">
         {STEPS.map((s, i) => (
@@ -90,7 +133,7 @@ function WorkflowSteps() {
             transition={{ duration: 0.7, delay: 0.2 + i * 0.15, ease: [0.16, 1, 0.3, 1] }}
             className="flex items-center gap-3"
           >
-            <StepDot state={i === 0 ? 'done' : i === 1 ? 'running' : 'waiting'} />
+            <StepDot state={stepState(i)} instant={!!reduceMotion} />
             <div className="min-w-0 flex-1 rounded-xl bg-[#202120] px-3.5 py-2.5 ring-1 ring-white/10">
               <div className="truncate text-[13.5px] text-ink">{s.task}</div>
               <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-muted">
@@ -105,30 +148,62 @@ function WorkflowSteps() {
   );
 }
 
-function StepDot({ state }: { state: 'done' | 'running' | 'waiting' }): ReactNode {
-  if (state === 'done')
-    return (
-      <span className="flex size-[23px] shrink-0 items-center justify-center rounded-full bg-[#315b3e] text-[#c0dfc6]">
-        <svg
-          width="11"
-          height="11"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="3"
-          strokeLinecap="round"
-        >
-          <path d="M20 6L9 17l-5-5" />
-        </svg>
-      </span>
-    );
-  if (state === 'running')
-    return (
-      <span className="relative flex size-[23px] shrink-0 items-center justify-center rounded-full bg-[#202120] ring-1 ring-[#78917d]">
-        <span className="size-2 rounded-full bg-[#a8c9ae]" />
-      </span>
-    );
-  return <span className="size-[23px] shrink-0 rounded-full bg-[#202120] ring-1 ring-white/20" />;
+function StepDot({ state, instant }: { state: StepState; instant: boolean }) {
+  return (
+    <motion.span
+      className="relative flex size-[23px] shrink-0 items-center justify-center rounded-full border"
+      initial={false}
+      animate={{
+        backgroundColor: state === 'done' ? '#315b3e' : '#202120',
+        borderColor:
+          state === 'done' ? '#315b3e' : state === 'running' ? '#78917d' : 'rgba(255,255,255,0.2)',
+      }}
+      transition={{ duration: instant ? 0 : 0.35, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <AnimatePresence mode="wait" initial={false}>
+        {state === 'running' && (
+          <motion.span
+            key="running"
+            className="flex size-3 items-center justify-center"
+            initial={{ opacity: 0, scale: 0.7 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.7 }}
+            transition={{ duration: 0.18 }}
+          >
+            <motion.span
+              className="block size-3 rounded-full border-2 border-[#58735f] border-t-[#b8dbc0]"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, ease: 'linear', repeat: Infinity }}
+            />
+          </motion.span>
+        )}
+        {state === 'done' && (
+          <motion.svg
+            key="done"
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#c0dfc6"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            initial={instant ? false : { opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.8 }}
+            transition={{ duration: instant ? 0 : 0.2 }}
+          >
+            <motion.path
+              d="M20 6L9 17l-5-5"
+              initial={instant ? false : { pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ duration: instant ? 0 : 0.32, ease: [0.22, 1, 0.36, 1] }}
+            />
+          </motion.svg>
+        )}
+      </AnimatePresence>
+    </motion.span>
+  );
 }
 
 function FolderIcon() {
