@@ -79,7 +79,7 @@ const STEPS = [
 function WorkflowSteps() {
   return (
     <div className="relative my-auto px-7 pb-8 sm:px-8" aria-hidden>
-      <div className="absolute top-5 bottom-14 left-[calc(1.75rem+11px)] w-px bg-white/10 sm:left-[calc(2rem+11px)]" />
+      <div className="absolute top-5 bottom-14 left-[calc(1.75rem+11px)] w-px bg-white/15 sm:left-[calc(2rem+11px)]" />
       <ol className="relative space-y-3">
         {STEPS.map((s, i) => (
           <motion.li
@@ -91,9 +91,9 @@ function WorkflowSteps() {
             className="flex items-center gap-3"
           >
             <StepDot state={i === 0 ? 'done' : i === 1 ? 'running' : 'waiting'} />
-            <div className="min-w-0 flex-1 rounded-xl bg-white/[0.03] px-3.5 py-2.5 ring-1 ring-line">
-              <div className="truncate text-[13.5px] text-ink/90">{s.task}</div>
-              <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-faint">
+            <div className="min-w-0 flex-1 rounded-xl bg-[#202120] px-3.5 py-2.5 ring-1 ring-white/10">
+              <div className="truncate text-[13.5px] text-ink">{s.task}</div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-muted">
                 <FolderIcon />
                 {s.folder}
               </div>
@@ -108,7 +108,7 @@ function WorkflowSteps() {
 function StepDot({ state }: { state: 'done' | 'running' | 'waiting' }): ReactNode {
   if (state === 'done')
     return (
-      <span className="flex size-[23px] shrink-0 items-center justify-center rounded-full bg-good/15 text-good">
+      <span className="flex size-[23px] shrink-0 items-center justify-center rounded-full bg-[#315b3e] text-[#c0dfc6]">
         <svg
           width="11"
           height="11"
@@ -124,11 +124,11 @@ function StepDot({ state }: { state: 'done' | 'running' | 'waiting' }): ReactNod
     );
   if (state === 'running')
     return (
-      <span className="relative flex size-[23px] shrink-0 items-center justify-center rounded-full bg-card ring-1 ring-sage/40">
-        <span className="size-2 animate-pulse rounded-full bg-sage" />
+      <span className="relative flex size-[23px] shrink-0 items-center justify-center rounded-full bg-[#202120] ring-1 ring-[#78917d]">
+        <span className="size-2 rounded-full bg-[#a8c9ae]" />
       </span>
     );
-  return <span className="size-[23px] shrink-0 rounded-full bg-card ring-1 ring-white/12" />;
+  return <span className="size-[23px] shrink-0 rounded-full bg-[#202120] ring-1 ring-white/20" />;
 }
 
 function FolderIcon() {
