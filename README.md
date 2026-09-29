@@ -43,15 +43,18 @@ Sign-ins stay on your computer. Setup tokens are stored in Windows Credential Ma
 
 ## Build from source
 
-Requirements: Node.js 22+ and Rust 1.96.1 (installed automatically by `rust-toolchain.toml` with rustup), plus Visual Studio Build Tools with the **Desktop development with C++** workload on Windows, or the Xcode Command Line Tools on macOS.
+Requirements: Git, Node.js 22+, and [rustup](https://rustup.rs/) (which installs Rust 1.96.1 from `rust-toolchain.toml`). On Windows, install Visual Studio Build Tools with the **Desktop development with C++** workload. On macOS, install the Xcode Command Line Tools.
+
+In PowerShell or macOS Terminal, clone the repository and run the desktop app:
 
 ```sh
+git clone https://github.com/SakethSripada/Perpetual-Desktop.git
+cd Perpetual-Desktop
 npm ci
-npm run desktop    # run with hot reload
-npm run bundle     # build the installer or app into target/release/bundle/
+npm run desktop
 ```
 
-`npm run dev` opens a browser preview of the interface without the engine.
+Run `npm run bundle` in that same folder to build an installer or app into `target/release/bundle/`. `npm run dev` opens a browser preview of the interface without the engine. The desktop app also needs a signed-in Codex CLI or Claude Code installation as described above.
 
 Checks:
 

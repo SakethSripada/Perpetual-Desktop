@@ -8,6 +8,7 @@ import {
   type Platform,
 } from '../lib/site';
 import { useRelease } from '../lib/useRelease';
+import { useDownloadFlow } from './DownloadFlow';
 import { AppleLogo, WindowsLogo } from './Mark';
 import { Reveal } from './Reveal';
 
@@ -80,83 +81,62 @@ export function Download() {
 }
 
 function DirectDownloadActions() {
+  const { platform, showInstructions } = useDownloadFlow();
+  const asset = platform === 'other' ? null : DIRECT_RELEASE[platform];
   return (
     <>
-      <Reveal delay={0.1} className="mx-auto mt-9 grid max-w-2xl gap-3 sm:grid-cols-2">
-        {PLATFORMS.map(({ id, label, note, Logo }) => {
-          const asset = DIRECT_RELEASE[id];
-          return (
+      <Reveal delay={0.1} className="mt-9 flex flex-wrap items-center justify-center gap-3">
+        {asset ? (
+          <a
+            href={asset.url}
+            onClick={() => {
+              if (platform !== 'other') showInstructions(platform);
+            }}
+            className="inline-flex h-12 items-center gap-2.5 rounded-full bg-ink px-6 text-[15px] font-medium text-bg shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_30px_-12px_rgba(255,255,255,0.35)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_16px_40px_-12px_rgba(255,255,255,0.45)]"
+          >
+            {platform === 'windows' ? <WindowsLogo size={16} /> : <AppleLogo size={16} />}
+            Download for {platform === 'windows' ? 'Windows' : 'macOS'}
+          </a>
+        ) : (
+          PLATFORMS.map(({ id, label, Logo }) => (
             <a
               key={id}
-              href={asset.url}
-              className="flex min-w-0 flex-col gap-3 rounded-2xl bg-white/[0.04] p-5 text-left ring-1 ring-line-strong transition-colors hover:bg-white/[0.08] hover:ring-white/30"
+              href={DIRECT_RELEASE[id].url}
+              onClick={() => showInstructions(id)}
+              className="inline-flex h-12 items-center gap-2.5 rounded-full bg-ink px-6 text-[15px] font-medium text-bg transition-transform hover:-translate-y-px"
             >
-              <span className="flex items-center gap-2 text-[18px] font-medium text-ink">
-                <Logo size={20} /> Download for {label}
-              </span>
-              <span className="text-[13px] text-muted">
-                {note} · {asset.name}
-              </span>
-              <span className="text-[13px] font-medium text-ink">Get from GitHub →</span>
+              <Logo size={16} /> Download for {label}
             </a>
-          );
-        })}
+          ))
+        )}
       </Reveal>
       <Reveal
         delay={0.16}
-        className="mx-auto mt-7 max-w-2xl space-y-5 text-[13px] leading-6 text-muted"
+        className="mx-auto mt-6 max-w-2xl space-y-3 text-center text-[13px] leading-6 text-muted"
       >
-        <p className="text-center">
-          Version {DIRECT_RELEASE.tag}. Windows requires x64; the macOS download works on Apple
-          silicon and Intel. These releases are unsigned while code signing is being arranged.
+        <p>
+          {platform === 'windows'
+            ? 'Windows x64 installer'
+            : platform === 'mac'
+              ? 'Universal Mac app for Apple silicon and Intel'
+              : 'Choose the installer for your computer'}{' '}
+          · {DIRECT_RELEASE.tag} · unsigned. Installation and verification steps appear after you
+          start the download.
         </p>
-        <div className="rounded-2xl bg-white/[0.035] p-5 ring-1 ring-line">
-          <h3 className="text-[15px] font-medium text-ink">Verify before opening</h3>
-          <p className="mt-2">
-            Compare your downloaded file’s SHA-256 with the value in{' '}
-            <a className="text-ink underline underline-offset-4" href={DIRECT_RELEASE.checksums}>
-              SHA256SUMS.txt on GitHub
-            </a>
-            . The release also includes{' '}
-            <a className="text-ink underline underline-offset-4" href={DIRECT_RELEASE.url}>
-              build provenance
-            </a>
-            .
-          </p>
-          <p className="mt-3">From the folder where you saved the installer, run:</p>
-          <p>
-            Windows PowerShell:{' '}
-            <code>Get-FileHash .\{DIRECT_RELEASE.windows.name} -Algorithm SHA256</code>
-          </p>
-          <p>
-            macOS Terminal: <code>shasum -a 256 {DIRECT_RELEASE.mac.name}</code>
-          </p>
-          <dl className="mt-4 space-y-3">
-            <div>
-              <dt className="text-ink">Expected Windows SHA-256</dt>
-              <dd className="break-all font-mono text-[12px]">{DIRECT_RELEASE.windows.sha256}</dd>
-            </div>
-            <div>
-              <dt className="text-ink">Expected macOS SHA-256</dt>
-              <dd className="break-all font-mono text-[12px]">{DIRECT_RELEASE.mac.sha256}</dd>
-            </div>
-          </dl>
-        </div>
-        <div className="rounded-2xl bg-white/[0.035] p-5 ring-1 ring-line">
-          <h3 className="text-[15px] font-medium text-ink">First open of an unsigned app</h3>
-          <p className="mt-2">
-            <strong className="font-medium text-ink">Windows:</strong> If SmartScreen shows “Windows
-            protected your PC,” select <strong className="font-medium text-ink">More info</strong>,
-            then <strong className="font-medium text-ink">Run anyway</strong> only after you have
-            confirmed the GitHub source and checksum. Some managed devices or Smart App Control
-            settings may not offer that option.
-          </p>
-          <p className="mt-3">
-            <strong className="font-medium text-ink">macOS:</strong> Open the DMG and drag Perpetual
-            to Applications. If macOS blocks first open, use System Settings → Privacy & Security →
-            Open Anyway after verifying the download.
-          </p>
-        </div>
+        <p className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
+          <a className="text-ink underline underline-offset-4" href={DIRECT_RELEASE.checksums}>
+            SHA-256 checksums
+          </a>
+          <a className="text-ink underline underline-offset-4" href={DIRECT_RELEASE.url}>
+            GitHub release
+          </a>
+          <a
+            className="text-ink underline underline-offset-4"
+            href="https://github.com/SakethSripada/Perpetual-Desktop#build-from-source"
+          >
+            Or clone and run from source
+          </a>
+        </p>
       </Reveal>
     </>
   );

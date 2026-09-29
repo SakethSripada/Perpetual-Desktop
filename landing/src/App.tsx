@@ -1,4 +1,5 @@
 import { Download } from './components/Download';
+import { DownloadProvider } from './components/DownloadFlow';
 import { Features } from './components/Features';
 import { Footer } from './components/Footer';
 import { Hero } from './components/Hero';
@@ -8,16 +9,18 @@ import { Switch } from './components/Switch';
 
 export function App() {
   return (
-    <div id="top">
-      <Nav />
-      <main>
-        <Hero />
-        <Story />
-        <Switch />
-        <Features />
-        <Download />
-      </main>
-      <Footer />
-    </div>
+    <DownloadProvider>
+      <div id="top">
+        <Nav />
+        <main>
+          <Hero />
+          <Story />
+          <Switch />
+          <Features />
+          <Download />
+        </main>
+        <Footer />
+      </div>
+    </DownloadProvider>
   );
 }
