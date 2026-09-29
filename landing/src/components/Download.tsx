@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react';
-import { RELEASES, detectPlatform, type Platform } from '../lib/site';
+import {
+  DIRECT_GITHUB_DOWNLOADS,
+  DIRECT_RELEASE,
+  RELEASES,
+  detectPlatform,
+  type Platform,
+} from '../lib/site';
 import { useRelease } from '../lib/useRelease';
 import { AppleLogo, WindowsLogo } from './Mark';
 import { Reveal } from './Reveal';
@@ -13,9 +19,6 @@ const PLATFORMS = [
 export function Download() {
   const section = useRef<HTMLElement>(null);
   const reduce = useReducedMotion();
-  const [platform, setPlatform] = useState<Platform>('other');
-  const { release, loading } = useRelease();
-  useEffect(() => setPlatform(detectPlatform()), []);
 
   const { scrollYProgress } = useScroll({
     target: section,
@@ -27,8 +30,6 @@ export function Download() {
   const rotateY = useTransform(p, [0, 1], [reduce ? 0 : -24, 0]);
   const y = useTransform(p, [0, 1], [reduce ? 0 : 120, 0]);
   const glow = useTransform(p, [0.4, 1], [0, 1]);
-
-  const primary = platform === 'other' ? 'windows' : platform;
 
   return (
     <section
@@ -73,6 +74,102 @@ export function Download() {
         </p>
       </Reveal>
 
+      {DIRECT_GITHUB_DOWNLOADS ? <DirectDownloadActions /> : <AutomaticDownloadActions />}
+    </section>
+  );
+}
+
+function DirectDownloadActions() {
+  return (
+    <>
+      <Reveal delay={0.1} className="mx-auto mt-9 grid max-w-2xl gap-3 sm:grid-cols-2">
+        {PLATFORMS.map(({ id, label, note, Logo }) => {
+          const asset = DIRECT_RELEASE[id];
+          return (
+            <a
+              key={id}
+              href={asset.url}
+              className="flex min-w-0 flex-col gap-3 rounded-2xl bg-white/[0.04] p-5 text-left ring-1 ring-line-strong transition-colors hover:bg-white/[0.08] hover:ring-white/30"
+            >
+              <span className="flex items-center gap-2 text-[18px] font-medium text-ink">
+                <Logo size={20} /> Download for {label}
+              </span>
+              <span className="text-[13px] text-muted">
+                {note} · {asset.name}
+              </span>
+              <span className="text-[13px] font-medium text-ink">Get from GitHub →</span>
+            </a>
+          );
+        })}
+      </Reveal>
+      <Reveal
+        delay={0.16}
+        className="mx-auto mt-7 max-w-2xl space-y-5 text-[13px] leading-6 text-muted"
+      >
+        <p className="text-center">
+          Version {DIRECT_RELEASE.tag}. Windows requires x64; the macOS download works on Apple
+          silicon and Intel. These releases are unsigned while code signing is being arranged.
+        </p>
+        <div className="rounded-2xl bg-white/[0.035] p-5 ring-1 ring-line">
+          <h3 className="text-[15px] font-medium text-ink">Verify before opening</h3>
+          <p className="mt-2">
+            Compare your downloaded file’s SHA-256 with the value in{' '}
+            <a className="text-ink underline underline-offset-4" href={DIRECT_RELEASE.checksums}>
+              SHA256SUMS.txt on GitHub
+            </a>
+            . The release also includes{' '}
+            <a className="text-ink underline underline-offset-4" href={DIRECT_RELEASE.url}>
+              build provenance
+            </a>
+            .
+          </p>
+          <p className="mt-3">From the folder where you saved the installer, run:</p>
+          <p>
+            Windows PowerShell:{' '}
+            <code>Get-FileHash .\{DIRECT_RELEASE.windows.name} -Algorithm SHA256</code>
+          </p>
+          <p>
+            macOS Terminal: <code>shasum -a 256 {DIRECT_RELEASE.mac.name}</code>
+          </p>
+          <dl className="mt-4 space-y-3">
+            <div>
+              <dt className="text-ink">Expected Windows SHA-256</dt>
+              <dd className="break-all font-mono text-[12px]">{DIRECT_RELEASE.windows.sha256}</dd>
+            </div>
+            <div>
+              <dt className="text-ink">Expected macOS SHA-256</dt>
+              <dd className="break-all font-mono text-[12px]">{DIRECT_RELEASE.mac.sha256}</dd>
+            </div>
+          </dl>
+        </div>
+        <div className="rounded-2xl bg-white/[0.035] p-5 ring-1 ring-line">
+          <h3 className="text-[15px] font-medium text-ink">First open of an unsigned app</h3>
+          <p className="mt-2">
+            <strong className="font-medium text-ink">Windows:</strong> If SmartScreen shows “Windows
+            protected your PC,” select <strong className="font-medium text-ink">More info</strong>,
+            then <strong className="font-medium text-ink">Run anyway</strong> only after you have
+            confirmed the GitHub source and checksum. Some managed devices or Smart App Control
+            settings may not offer that option.
+          </p>
+          <p className="mt-3">
+            <strong className="font-medium text-ink">macOS:</strong> Open the DMG and drag Perpetual
+            to Applications. If macOS blocks first open, use System Settings → Privacy & Security →
+            Open Anyway after verifying the download.
+          </p>
+        </div>
+      </Reveal>
+    </>
+  );
+}
+
+/** Preserve the manifest-backed, platform-aware flow for signed releases. */
+function AutomaticDownloadActions() {
+  const [platform, setPlatform] = useState<Platform>('other');
+  const { release, loading } = useRelease();
+  useEffect(() => setPlatform(detectPlatform()), []);
+  const primary = platform === 'other' ? 'windows' : platform;
+  return (
+    <>
       <Reveal delay={0.1} className="mt-9 flex flex-wrap items-center justify-center gap-3">
         {PLATFORMS.map(({ id, label, note, Logo }) =>
           id === primary ? (
@@ -113,15 +210,21 @@ export function Download() {
         </p>
         {release && (
           <p className="max-w-2xl text-[13px] leading-6 text-faint">
-            These installers are unsigned. Windows SmartScreen or macOS Gatekeeper may warn on first open.
-            Verify the file before running it with{' '}
-            <a className="text-muted underline underline-offset-4 hover:text-ink" href={release.checksums.url}>
+            These installers are unsigned. Windows SmartScreen or macOS Gatekeeper may warn on first
+            open. Verify the file before running it with{' '}
+            <a
+              className="text-muted underline underline-offset-4 hover:text-ink"
+              href={release.checksums.url}
+            >
               SHA256SUMS.txt
             </a>
             : on Windows run <code>Get-FileHash .\Installer.exe -Algorithm SHA256</code>; on macOS
             run <code>shasum -a 256 Installer.dmg</code>. Match the result to your file’s entry in
             the checksum list.{' '}
-            <a className="text-muted underline underline-offset-4 hover:text-ink" href={release.url}>
+            <a
+              className="text-muted underline underline-offset-4 hover:text-ink"
+              href={release.url}
+            >
               Release notes and build provenance
             </a>
             .
@@ -150,6 +253,6 @@ export function Download() {
             : 'Source, releases, and build provenance on GitHub'}
         </a>
       </Reveal>
-    </section>
+    </>
   );
 }
