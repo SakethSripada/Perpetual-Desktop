@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useRelease } from '../lib/useRelease';
-import { DIRECT_GITHUB_DOWNLOADS, PLATFORM_NAME, detectPlatform, type Platform } from '../lib/site';
+import {
+  DIRECT_GITHUB_DOWNLOADS,
+  DIRECT_RELEASE,
+  PLATFORM_NAME,
+  detectPlatform,
+  type Platform,
+} from '../lib/site';
+import { useDownloadFlow } from './DownloadFlow';
 import { AppleLogo, WindowsLogo } from './Mark';
 
 type Props = {
@@ -23,10 +30,28 @@ export function DownloadButton(props: Props) {
 }
 
 function DirectDownloadButton({ size = 'lg', className = '' }: Props) {
+  const { platform, showInstructions } = useDownloadFlow();
   const small = size === 'sm';
+  if (platform === 'other') {
+    return (
+      <a href="#download" className={buttonStyle(small, className)}>
+        {small ? 'Downloads' : 'Choose your download'}
+      </a>
+    );
+  }
+  const asset = DIRECT_RELEASE[platform];
   return (
-    <a href="#download" className={buttonStyle(small, className)}>
-      {small ? 'Downloads' : 'Choose your download'}
+    <a
+      href={asset.url}
+      onClick={() => showInstructions(platform)}
+      className={buttonStyle(small, className)}
+    >
+      {platform === 'windows' ? (
+        <WindowsLogo size={small ? 12 : 15} />
+      ) : (
+        <AppleLogo size={small ? 13 : 16} />
+      )}
+      {small ? 'Download' : `Download for ${PLATFORM_NAME[platform]}`}
     </a>
   );
 }
