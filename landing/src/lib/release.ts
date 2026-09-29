@@ -25,7 +25,12 @@ export interface Release {
   downloads: Record<DownloadPlatform, ReleaseAsset>;
 }
 
-const API = 'https://api.github.com/repos/SakethSripada/Perpetual-Desktop/releases/latest';
+// GitHub Pages serves a release snapshot generated with the workflow token.
+// Local development reads the public API directly.
+const API =
+  import.meta.env.BASE_URL === '/'
+    ? 'https://api.github.com/repos/SakethSripada/Perpetual-Desktop/releases/latest'
+    : `${import.meta.env.BASE_URL}release.json`;
 
 function validAsset(asset: GitHubAsset): boolean {
   return (

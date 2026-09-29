@@ -2,6 +2,8 @@ name: Site
 
 on:
   workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -25,6 +27,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: landing/package-lock.json
+      - name: Snapshot the latest published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/$GITHUB_REPOSITORY/releases/latest" > landing/public/release.json
       - name: Build site
         working-directory: landing
         env:
