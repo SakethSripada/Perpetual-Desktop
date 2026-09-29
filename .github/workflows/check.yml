@@ -51,6 +51,10 @@ jobs:
       - run: cargo check -p perpetual-desktop --locked
       - run: cargo test -p am-core --lib --locked
       - run: cargo test -p am-vcs -p am-proto --locked
+      - name: Build universal macOS disk image
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: npx tauri build --ci --target universal-apple-darwin
 
   landing:
     runs-on: ubuntu-latest

@@ -138,8 +138,7 @@ async fn run_live_approval(agent: AgentKind, permission: PermissionPolicy, expec
             repo_id: Some(repo.id.clone()),
             description: Some(
                 "Use ONLY the shell/Bash tool (do NOT use Write, Edit, or any file tool). \
-                 Run exactly this single command and report its output, then stop: \
-                 python3 -c 'print(\"Perpetual-OK\")'"
+                 Run exactly this single command and report its output, then stop: git --version"
                     .into(),
             ),
             priority: TaskPriority::Medium,
@@ -211,6 +210,20 @@ async fn run_live_approval(agent: AgentKind, permission: PermissionPolicy, expec
         return;
     }
 
+    assert!(
+        events.iter().any(|event| {
+            event.kind == "tool_result"
+                && event.data.get("ok").and_then(serde_json::Value::as_bool) == Some(true)
+                && event
+                    .data
+                    .get("summary")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|summary| summary.contains("git version"))
+        }),
+        "{} {permission:?}: the command did not succeed: {kinds:?}",
+        agent.label()
+    );
+
     if expect_prompt {
         assert!(
             count > 0,
@@ -242,4 +255,21 @@ async fn codex_edit_mode_runs_over_app_server() {
     // `on-request` policy: a plain in-workspace command need not escalate, so we
     // only assert the app-server transport drives the run to completion.
     run_live_approval(AgentKind::Codex, PermissionPolicy::WorkspaceWrite, false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires the real Claude Code CLI; run with --ignored"]
+async fn claude_edit_mode_runs() {
+    run_live_approval(
+        AgentKind::ClaudeCode,
+        PermissionPolicy::WorkspaceWrite,
+        true,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires the real Claude Code CLI; run with --ignored"]
+async fn claude_ask_mode_prompts() {
+    run_live_approval(AgentKind::ClaudeCode, PermissionPolicy::Ask, true).await;
 }

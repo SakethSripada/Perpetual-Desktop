@@ -209,7 +209,7 @@ jobs:
               echo
               echo "> [!NOTE]"
               [ "$WINDOWS_SIGNED" != "true" ] && echo "> The Windows installer isn't code-signed, so SmartScreen may ask you to confirm before running it."
-              [ "$MACOS_SIGNED" != "true" ] && echo "> The macOS app isn't notarized. Right-click it and choose **Open** the first time."
+              [ "$MACOS_SIGNED" != "true" ] && echo "> The macOS app isn't notarized. After trying to open it, go to **System Settings → Privacy & Security → Open Anyway**. See [Apple's instructions](https://support.apple.com/en-us/102445)."
             fi
           } > notes.md
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \

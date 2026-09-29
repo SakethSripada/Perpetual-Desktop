@@ -305,6 +305,26 @@ pub fn commit_all_with_excludes(
     message: &str,
     exclude_paths: &[&str],
 ) -> Result<Option<String>, VcsError> {
+    commit_all_with_excludes_impl(repo, message, exclude_paths, false)
+}
+
+/// Snapshot an app-owned worktree after its patch is applied to the visible
+/// checkout. This is internal bookkeeping, so user commit hooks and signing
+/// settings must not prevent the task from continuing.
+pub fn checkpoint_worktree_with_excludes(
+    repo: &Path,
+    message: &str,
+    exclude_paths: &[&str],
+) -> Result<Option<String>, VcsError> {
+    commit_all_with_excludes_impl(repo, message, exclude_paths, true)
+}
+
+fn commit_all_with_excludes_impl(
+    repo: &Path,
+    message: &str,
+    exclude_paths: &[&str],
+    internal_checkpoint: bool,
+) -> Result<Option<String>, VcsError> {
     let _ = git(repo, &["reset", "--mixed"]);
 
     let mut add_args = vec![
@@ -328,14 +348,28 @@ pub fn commit_all_with_excludes(
         return Ok(None);
     }
 
-    let output = am_proto::hide_console(&mut Command::new("git"))
-        .arg("-C")
-        .arg(repo)
+    let mut command = Command::new("git");
+    am_proto::hide_console(&mut command);
+    command.arg("-C").arg(repo);
+    if internal_checkpoint {
+        command.arg("-c").arg("commit.gpgsign=false");
+        command.arg("-c").arg(if cfg!(windows) {
+            "core.hooksPath=NUL"
+        } else {
+            "core.hooksPath=/dev/null"
+        });
+    }
+    let output = command
         .arg("-c")
         .arg("user.name=Perpetual")
         .arg("-c")
         .arg("user.email=perpetual@local")
         .arg("commit")
+        .args(if internal_checkpoint {
+            &["--no-verify"][..]
+        } else {
+            &[]
+        })
         .arg("-m")
         .arg(message)
         .output()
@@ -820,6 +854,24 @@ mod apply_tests {
         std::fs::write(repo.join("file.txt"), "base\n").unwrap();
         run(repo, &["add", "."]);
         run(repo, &["commit", "-m", "base"]);
+    }
+
+    #[test]
+    fn internal_checkpoint_ignores_user_signing_requirement() {
+        let repo = temp_repo("checkpoint-signing");
+        init_repo(&repo);
+        run(&repo, &["config", "commit.gpgsign", "true"]);
+        std::fs::write(repo.join("applied.txt"), "applied\n").unwrap();
+
+        let head = checkpoint_worktree_with_excludes(&repo, "checkpoint", &[])
+            .unwrap()
+            .expect("checkpoint should create a commit");
+        assert_eq!(head, head_sha(&repo).unwrap());
+        assert!(worktree_patch_with_excludes(&repo, &head, &[])
+            .unwrap()
+            .is_empty());
+
+        let _ = std::fs::remove_dir_all(repo);
     }
 
     #[test]

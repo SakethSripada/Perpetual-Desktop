@@ -40,7 +40,7 @@ macOS won't open downloaded apps that aren't signed with a Developer ID and nota
 - `APPLE_SIGNING_IDENTITY`: for example `Developer ID Application: Your Name (TEAMID)`
 - `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password), and `APPLE_TEAM_ID` for notarization
 
-Without them, the macOS app is only ad-hoc signed; people have to right-click it and choose **Open** the first time.
+Without them, the macOS app is only ad-hoc signed. After attempting to open it, people may need to use **System Settings → Privacy & Security → Open Anyway** as [Apple describes](https://support.apple.com/en-us/102445).
 
 ## If antivirus flags a build
 
@@ -60,7 +60,7 @@ What the app already avoids, so it doesn't look like malware:
 ## Release checklist
 
 - [ ] The Windows installer runs without administrator rights, and the Start menu shortcut launches the app.
-- [ ] On macOS, the app opens from Applications without a warning, and its window controls sit in the title bar.
+- [ ] On macOS, the app opens from Applications after the unsigned-app override, and its window controls sit in the title bar.
 - [ ] On first launch, a signed-in Codex or Claude CLI appears in Accounts with its email.
 - [ ] Browser sign-in for Codex and Claude opens the browser without a terminal window, then the account becomes signed in.
 - [ ] A task runs on Codex and on Claude, and the reply streams in.

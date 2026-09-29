@@ -664,7 +664,7 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
 pub async fn pause_orphaned_running(pool: &SqlitePool) -> Result<u64, DbError> {
     let res =
         sqlx::query(
-            "UPDATE agent_threads SET status = ?, handoff_state = ?, updated_at = ? WHERE status = 'running'",
+            "UPDATE agent_threads SET status = CASE WHEN status = 'awaiting_approval' THEN 'paused' ELSE ? END, handoff_state = ?, updated_at = ? WHERE status IN ('running', 'awaiting_approval')",
         )
             .bind(TaskStatus::Queued.as_str())
             .bind("process_restarted")

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react';
 import { RELEASES, detectPlatform, type Platform } from '../lib/site';
+import { useRelease } from '../lib/useRelease';
 import { AppleLogo, WindowsLogo } from './Mark';
 import { Reveal } from './Reveal';
 
@@ -13,6 +14,7 @@ export function Download() {
   const section = useRef<HTMLElement>(null);
   const reduce = useReducedMotion();
   const [platform, setPlatform] = useState<Platform>('other');
+  const { release, loading } = useRelease();
   useEffect(() => setPlatform(detectPlatform()), []);
 
   const { scrollYProgress } = useScroll({
@@ -46,7 +48,7 @@ export function Download() {
           className="relative [transform-style:preserve-3d]"
         >
           <img
-            src="/icon.png"
+            src={`${import.meta.env.BASE_URL}icon.png`}
             alt="Perpetual app icon"
             width={176}
             height={176}
@@ -54,7 +56,7 @@ export function Download() {
           />
           {/* A soft reflection on the floor beneath. */}
           <img
-            src="/icon.png"
+            src={`${import.meta.env.BASE_URL}icon.png`}
             alt=""
             aria-hidden
             className="absolute top-full left-0 mt-3 size-[148px] scale-y-[-1] opacity-[0.12] blur-[2px] [mask-image:linear-gradient(to_top,black,transparent_55%)] sm:size-[176px]"
@@ -76,17 +78,21 @@ export function Download() {
           id === primary ? (
             <a
               key={id}
-              href={RELEASES}
+              href={release?.downloads[id].url ?? '#download-status'}
+              aria-disabled={!release}
+              onClick={release ? undefined : (event) => event.preventDefault()}
               className="inline-flex h-12 items-center gap-2.5 rounded-full bg-ink px-6 text-[15px] font-medium text-bg shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_30px_-12px_rgba(255,255,255,0.35)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_16px_40px_-12px_rgba(255,255,255,0.45)]"
             >
               <Logo size={16} />
-              Download for {label}
+              {release ? `Download for ${label}` : `${label} download coming soon`}
               <span className="text-bg/50">{note}</span>
             </a>
           ) : (
             <a
               key={id}
-              href={RELEASES}
+              href={release?.downloads[id].url ?? '#download-status'}
+              aria-disabled={!release}
+              onClick={release ? undefined : (event) => event.preventDefault()}
               className="inline-flex h-12 items-center gap-2.5 rounded-full px-6 text-[15px] font-medium text-muted ring-1 ring-line-strong transition-colors hover:bg-white/[0.04] hover:text-ink"
             >
               <Logo size={16} />
@@ -97,9 +103,32 @@ export function Download() {
         )}
       </Reveal>
 
-      <Reveal delay={0.16} className="mt-7 flex justify-center">
+      <Reveal delay={0.16} className="mt-7 flex flex-col items-center gap-3 text-center">
+        <p id="download-status" className="text-[13px] text-muted">
+          {loading
+            ? 'Checking the latest release…'
+            : release
+              ? 'Choose the installer for your computer. Windows is x64; macOS supports Apple silicon and Intel.'
+              : 'Installers will appear here after the release is published.'}
+        </p>
+        {release && (
+          <p className="max-w-2xl text-[13px] leading-6 text-faint">
+            These installers are unsigned. Windows SmartScreen or macOS Gatekeeper may warn on first open.
+            Verify the file before running it with{' '}
+            <a className="text-muted underline underline-offset-4 hover:text-ink" href={release.checksums.url}>
+              SHA256SUMS.txt
+            </a>
+            : on Windows run <code>Get-FileHash .\Installer.exe -Algorithm SHA256</code>; on macOS
+            run <code>shasum -a 256 Installer.dmg</code>. Match the result to your file’s entry in
+            the checksum list.{' '}
+            <a className="text-muted underline underline-offset-4 hover:text-ink" href={release.url}>
+              Release notes and build provenance
+            </a>
+            .
+          </p>
+        )}
         <a
-          href={RELEASES}
+          href={release?.checksums.url ?? RELEASES}
           className="inline-flex items-center gap-2 text-center text-[13px] text-balance text-faint transition-colors hover:text-muted"
         >
           <svg
@@ -116,7 +145,9 @@ export function Download() {
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             <path d="m9 12 2 2 4-4" />
           </svg>
-          Built on GitHub, with SHA-256 checksums and build provenance for every release
+          {release
+            ? 'View the SHA-256 checksums for this release'
+            : 'Source, releases, and build provenance on GitHub'}
         </a>
       </Reveal>
     </section>

@@ -80,14 +80,14 @@ export const Video = forwardRef<
       ref={video}
       aria-label={label}
       className={className}
-      poster={`/media/${name}.jpg`}
+      poster={`${import.meta.env.BASE_URL}media/${name}.jpg`}
       muted
       playsInline
       loop={loop && !start}
       preload={near ? 'auto' : 'none'}
     >
-      {near && variant === '' && <source src={`/media/${name}.webm`} type="video/webm" />}
-      {near && <source src={`/media/${name}${variant}.mp4`} type="video/mp4" />}
+      {near && variant === '' && <source src={`${import.meta.env.BASE_URL}media/${name}.webm`} type="video/webm" />}
+      {near && <source src={`${import.meta.env.BASE_URL}media/${name}${variant}.mp4`} type="video/mp4" />}
     </video>
   );
 });
