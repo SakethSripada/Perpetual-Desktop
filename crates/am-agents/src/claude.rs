@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
 use tokio::sync::{mpsc, oneshot};
@@ -26,8 +26,9 @@ use crate::runtime::{
     RuntimeLimits,
 };
 use crate::{
-    AgentAdapter, AgentError, AgentInstallStatus, AgentKind, NormalizedEvent, PermissionPolicy,
-    SessionControl, SessionHandle, SessionRef, SessionSpec, SessionStatus,
+    AgentAdapter, AgentError, AgentInstallStatus, AgentKind, ApprovalAsk, ApprovalDecision,
+    ApprovalKind, ApprovalResponder, NormalizedEvent, PermissionPolicy, SessionControl,
+    SessionHandle, SessionRef, SessionSpec, SessionStatus,
 };
 
 const BIN: &str = "claude";
@@ -51,14 +52,14 @@ impl ClaudeAdapter {
         let envs = policy_env(&spec);
         tracing::debug!(?args, worktree = ?spec.worktree, "launching claude");
 
-        let budgeted = budgeted_host_run(&spec);
-        let mut child = if budgeted {
+        let streaming = stream_input(&spec);
+        let mut child = if streaming {
             crate::runtime::spawn_host_piped_stdin(BIN, &args, &spec.worktree, &envs).await?
         } else {
             spawn_for_runtime_with_env(BIN, "claude", &args, &spec.worktree, &spec.runtime, &envs)
                 .await?
         };
-        let stdin = budgeted.then(|| child.take_stdin()).flatten();
+        let stdin = streaming.then(|| child.take_stdin()).flatten();
         let stdout = child
             .take_stdout()
             .ok_or_else(|| AgentError::Spawn("no stdout pipe".into()))?;
@@ -74,7 +75,9 @@ impl ClaudeAdapter {
             stdout,
             stderr,
             stdin,
-            budgeted.then(|| spec.prompt.clone()),
+            streaming.then(|| spec.prompt.clone()),
+            spec.approver,
+            spec.worktree,
             steer_rx,
             tx,
             cancel_rx,
@@ -135,8 +138,9 @@ impl AgentAdapter for ClaudeAdapter {
 /// Build the `claude` argument vector. Every value is a discrete argument; the
 /// prompt is never interpolated into a shell string.
 fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
-    let mut args = if budgeted_host_run(spec) {
+    let mut args = if stream_input(spec) {
         vec![
+            "-p".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
             "--output-format".to_string(),
@@ -155,17 +159,30 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
         ]
     };
 
+    if spec.approver.is_some() && matches!(spec.runtime, crate::SessionRuntime::Host { .. }) {
+        args.push("--permission-prompt-tool".into());
+        args.push("stdio".into());
+    }
+
     match spec.permission {
         PermissionPolicy::ReadOnly => {
             args.push("--permission-mode".into());
             args.push("plan".into());
         }
-        PermissionPolicy::WorkspaceWrite | PermissionPolicy::Ask => {
+        PermissionPolicy::WorkspaceWrite => {
             args.push("--permission-mode".into());
-            // Headless Claude runs have no interactive approval channel. Keep
-            // the non-interactive behavior explicit and safe for normal edits;
-            // Codex exposes in-app approvals through its app-server transport.
             args.push("acceptEdits".into());
+        }
+        PermissionPolicy::Ask => {
+            args.push("--permission-mode".into());
+            args.push(
+                if spec.approver.is_some() {
+                    "manual"
+                } else {
+                    "acceptEdits"
+                }
+                .into(),
+            );
         }
         PermissionPolicy::Autonomous => {
             args.push("--dangerously-skip-permissions".into());
@@ -198,18 +215,108 @@ fn budgeted_host_run(spec: &SessionSpec) -> bool {
             .is_some_and(|budget| !budget.is_unlimited())
 }
 
-async fn write_stream_input(stdin: &mut ChildStdin, text: &str) -> std::io::Result<()> {
-    let line = serde_json::json!({
+fn stream_input(spec: &SessionSpec) -> bool {
+    budgeted_host_run(spec)
+        || (spec.approver.is_some() && matches!(spec.runtime, crate::SessionRuntime::Host { .. }))
+}
+
+fn stream_user_line(text: &str) -> String {
+    json!({
         "type": "user",
         "message": {
             "role": "user",
             "content": [{ "type": "text", "text": text }]
         }
     })
-    .to_string();
-    stdin.write_all(line.as_bytes()).await?;
-    stdin.write_all(b"\n").await?;
-    stdin.flush().await
+    .to_string()
+}
+
+fn handle_control_request(
+    value: Value,
+    approver: Option<ApprovalResponder>,
+    input_tx: mpsc::Sender<String>,
+    worktree: std::path::PathBuf,
+) {
+    let Some(request_id) = value
+        .get("request_id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let request = value.get("request").cloned().unwrap_or(Value::Null);
+    tokio::spawn(async move {
+        let response = if request.get("subtype").and_then(Value::as_str) == Some("can_use_tool") {
+            let tool_name = request
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let input = request.get("input").cloned().unwrap_or_else(|| json!({}));
+            let command = input.get("command").and_then(Value::as_str);
+            let decision = if let Some(approver) = approver {
+                approver
+                    .ask(ApprovalAsk {
+                        kind: if command.is_some() {
+                            ApprovalKind::Command
+                        } else {
+                            ApprovalKind::Tool
+                        },
+                        tool_name: tool_name.to_string(),
+                        command: command.map(|text| vec![text.to_string()]),
+                        cwd: Some(worktree.to_string_lossy().to_string()),
+                        input: input.clone(),
+                        reason: request
+                            .get("decision_reason")
+                            .or_else(|| request.get("description"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                    })
+                    .await
+            } else {
+                ApprovalDecision::Deny
+            };
+            if decision.is_allow() {
+                let mut allow = json!({"behavior": "allow", "updatedInput": input});
+                if decision == ApprovalDecision::AllowForSession {
+                    let suggestions = request
+                        .get("permission_suggestions")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|suggestion| {
+                            suggestion.get("behavior").and_then(Value::as_str) == Some("allow")
+                        })
+                        .map(|mut suggestion| {
+                            suggestion["destination"] = json!("session");
+                            suggestion
+                        })
+                        .collect::<Vec<_>>();
+                    if !suggestions.is_empty() {
+                        allow["updatedPermissions"] = json!(suggestions);
+                    }
+                }
+                allow
+            } else {
+                json!({
+                    "behavior": "deny",
+                    "message": "Denied in Perpetual",
+                    "interrupt": decision == ApprovalDecision::Abort,
+                })
+            }
+        } else {
+            json!({"behavior": "deny", "message": "Unsupported Claude control request"})
+        };
+        let reply = json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": response,
+            }
+        });
+        let _ = input_tx.send(reply.to_string()).await;
+    });
 }
 
 fn push_policy_args(args: &mut Vec<String>, policy: &crate::AgentPolicyRuntime) {
@@ -297,15 +404,31 @@ async fn drive(
     mut child: ManagedChild,
     stdout: tokio::process::ChildStdout,
     stderr: Option<tokio::process::ChildStderr>,
-    mut stdin: Option<ChildStdin>,
+    stdin: Option<ChildStdin>,
     initial_prompt: Option<String>,
+    approver: Option<ApprovalResponder>,
+    worktree: std::path::PathBuf,
     mut steer_rx: mpsc::UnboundedReceiver<String>,
     tx: mpsc::Sender<NormalizedEvent>,
     mut cancel_rx: oneshot::Receiver<()>,
     limits: RuntimeLimits,
 ) {
-    if let (Some(stdin), Some(prompt)) = (stdin.as_mut(), initial_prompt.as_deref()) {
-        if write_stream_input(stdin, prompt).await.is_err() {
+    let (mut input_tx, input_task) = if let Some(mut stdin) = stdin {
+        let (sender, mut receiver) = mpsc::channel::<String>(32);
+        let task = tokio::spawn(async move {
+            while let Some(line) = receiver.recv().await {
+                stdin.write_all(line.as_bytes()).await?;
+                stdin.write_all(b"\n").await?;
+                stdin.flush().await?;
+            }
+            Ok::<(), std::io::Error>(())
+        });
+        (Some(sender), Some(task))
+    } else {
+        (None, None)
+    };
+    if let (Some(sender), Some(prompt)) = (input_tx.as_ref(), initial_prompt.as_deref()) {
+        if sender.send(stream_user_line(prompt)).await.is_err() {
             let _ = tx
                 .send(NormalizedEvent::Error {
                     message: "Claude stream input closed before the session started".into(),
@@ -350,12 +473,18 @@ async fn drive(
                         Ok(value) => {
                             saw_structured_output = true;
                             idle_timeout.as_mut().reset(tokio::time::Instant::now() + limits.idle_timeout);
+                            if value.get("type").and_then(Value::as_str) == Some("control_request") {
+                                if let Some(sender) = input_tx.as_ref() {
+                                    handle_control_request(value.clone(), approver.clone(), sender.clone(), worktree.clone());
+                                }
+                                continue;
+                            }
                             if value.get("type").and_then(|t| t.as_str()) == Some("result") {
                                 saw_result = true;
                                 // Print-mode stream input is bidirectional. Once Claude has
                                 // emitted its terminal result, close our side of the pipe so
                                 // the process can exit instead of waiting for another turn.
-                                drop(stdin.take());
+                                drop(input_tx.take());
                             }
                             let message_id = usage_message_id(&value);
                             for event in parse_line(&value) {
@@ -382,9 +511,9 @@ async fn drive(
                 Ok(None) => break,         // EOF: process is finishing
                 Err(e) => { tracing::warn!(error = %e, "stdout read error"); break; }
             },
-            Some(instruction) = steer_rx.recv(), if stdin.is_some() => {
-                if let Some(input) = stdin.as_mut() {
-                    if write_stream_input(input, &instruction).await.is_err() {
+            Some(instruction) = steer_rx.recv(), if input_tx.is_some() => {
+                if let Some(sender) = input_tx.as_ref() {
+                    if sender.send(stream_user_line(&instruction)).await.is_err() {
                         break;
                     }
                 }
@@ -406,6 +535,11 @@ async fn drive(
                 break;
             }
         }
+    }
+
+    drop(input_tx);
+    if let Some(task) = input_task {
+        task.abort();
     }
 
     // Terminate the whole process group if we cut the run short.
@@ -821,6 +955,33 @@ mod tests {
     }
 
     #[test]
+    fn host_approval_uses_bidirectional_stream_and_manual_ask_mode() {
+        let spec = SessionSpec {
+            worktree: "/tmp/worktree".into(),
+            prompt: "Run a command".into(),
+            model: None,
+            reasoning: None,
+            local_model: None,
+            permission: PermissionPolicy::Ask,
+            runtime: crate::SessionRuntime::default(),
+            policy: None,
+            approver: Some(ApprovalResponder::new(|_| {
+                Box::pin(async { ApprovalDecision::Allow })
+            })),
+        };
+        let args = build_args(&spec, None);
+        assert!(args
+            .windows(2)
+            .any(|p| p == ["--input-format", "stream-json"]));
+        assert!(args
+            .windows(2)
+            .any(|p| p == ["--permission-prompt-tool", "stdio"]));
+        assert!(args
+            .windows(2)
+            .any(|p| p == ["--permission-mode", "manual"]));
+    }
+
+    #[test]
     fn read_only_runs_use_claude_plan_mode() {
         let spec = SessionSpec {
             worktree: "/tmp/worktree".into(),
@@ -918,7 +1079,7 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--input-format", "stream-json"]));
-        assert!(!args.iter().any(|arg| arg == "-p"));
+        assert!(args.iter().any(|arg| arg == "-p"));
     }
 
     #[test]

@@ -80,9 +80,9 @@ export function Hero() {
           <span className="hidden h-3 w-px bg-line-strong sm:block" />
           <span className="flex items-center gap-2">
             Works with
-            <img src="/brands/openai.svg" alt="" className="size-3.5 opacity-80" />
+            <img src={`${import.meta.env.BASE_URL}brands/openai.svg`} alt="" className="size-3.5 opacity-80" />
             Codex
-            <img src="/brands/claude.svg" alt="" className="size-3.5" />
+            <img src={`${import.meta.env.BASE_URL}brands/claude.svg`} alt="" className="size-3.5" />
             Claude Code
           </span>
         </motion.div>
@@ -118,7 +118,7 @@ export function Hero() {
             className="absolute top-[14%] -right-8 hidden w-64 rounded-2xl bg-[#232423]/95 p-2 text-left text-[13px] shadow-[0_0_0_1px_rgba(255,255,255,0.09),0_30px_70px_-24px_rgba(0,0,0,0.95)] lg:block"
           >
             <div className="flex items-center gap-2 px-2.5 pt-1.5 pb-1 text-[11px] text-faint">
-              <img src="/brands/openai.svg" alt="" className="size-3" />
+              <img src={`${import.meta.env.BASE_URL}brands/openai.svg`} alt="" className="size-3" />
               Codex
             </div>
             <div className="rounded-lg px-2.5 py-1.5">

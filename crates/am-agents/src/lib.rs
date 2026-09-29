@@ -127,9 +127,8 @@ pub struct SessionSpec {
     /// Effective policy controls derived by `am-core` for this single launch.
     /// Adapters translate these into the native CLI/config surfaces they own.
     pub policy: Option<AgentPolicyRuntime>,
-    /// Live-approval callback for [`PermissionPolicy::Ask`]. Set by `am-core`;
-    /// only adapters with a bidirectional protocol (Codex app-server) use it.
-    /// `None` for adapters that do not support live approval callbacks.
+    /// Live-approval callback for Ask and WorkspaceWrite. Set by `am-core`;
+    /// used by the Codex app-server and Claude stream-json adapters.
     pub approver: Option<ApprovalResponder>,
 }
 

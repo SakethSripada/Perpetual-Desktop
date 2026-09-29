@@ -263,6 +263,52 @@ impl AppCore {
             }
         }
         self.cleanup_thread_sandboxes(id).await;
+        let links = am_db::repos::agent_thread_repo::list_for_thread(&self.db.pool, id).await?;
+        for link in links {
+            let Some(worktree_path) = link.worktree_path else {
+                continue;
+            };
+            let Some(repo) = am_db::repos::repo::get(&self.db.pool, &link.repo_id).await? else {
+                continue;
+            };
+            let Some(repo_path) = repo.local_path else {
+                continue;
+            };
+            let worktree = PathBuf::from(worktree_path);
+            let visible_repo = PathBuf::from(repo_path);
+            if same_path(&worktree, &visible_repo) {
+                continue;
+            }
+            let managed_root = self.thread_workspace_path(id, link.workspace_backend);
+            let expected = managed_root.join(safe_repo_dir(&link.repo_name, &link.repo_id));
+            if worktree != expected {
+                return Err(CoreError::Other(format!(
+                    "Refusing to remove a thread workspace outside its expected path: {}",
+                    worktree.display()
+                )));
+            }
+            if worktree.exists() {
+                let resolved_root = managed_root
+                    .canonicalize()
+                    .map_err(|error| CoreError::Other(error.to_string()))?;
+                let resolved_worktree = worktree
+                    .canonicalize()
+                    .map_err(|error| CoreError::Other(error.to_string()))?;
+                if !resolved_worktree.starts_with(&resolved_root) {
+                    return Err(CoreError::Other(format!(
+                        "Refusing to remove a thread workspace outside its managed directory: {}",
+                        worktree.display()
+                    )));
+                }
+            }
+            let branch = link.branch.clone();
+            let backend = link.workspace_backend;
+            tokio::task::spawn_blocking(move || {
+                cleanup_managed_workspace(&visible_repo, &worktree, branch.as_deref(), backend)
+            })
+            .await
+            .map_err(|error| CoreError::Other(error.to_string()))??;
+        }
         am_db::repos::agent_thread::delete(&self.db.pool, id).await?;
         self.activity(
             thread.project_id,
@@ -716,6 +762,19 @@ impl AppCore {
             runtime_policy.launch_env = account.env;
             runtime_policy.provider_account_id = Some(account.id);
         }
+        if backend == ExecutionBackend::Host && !workspace.uses_visible_repo {
+            let managed_root = std::fs::canonicalize(&workspace_path)
+                .map_err(|error| CoreError::Other(error.to_string()))?;
+            let links =
+                am_db::repos::agent_thread_repo::list_for_thread(&self.db.pool, thread_id).await?;
+            let managed_repos = links
+                .iter()
+                .filter_map(|link| link.worktree_path.as_deref())
+                .filter_map(|path| std::fs::canonicalize(path).ok())
+                .filter(|path| path.starts_with(&managed_root) && path != &managed_root)
+                .collect::<Vec<_>>();
+            add_managed_git_safe_directories(&mut runtime_policy.launch_env, &managed_repos)?;
+        }
         let spec = SessionSpec {
             worktree: workspace_path,
             prompt: match (&message, prior.is_some()) {
@@ -1148,46 +1207,58 @@ impl AppCore {
                 .await
                 .map_err(|e| CoreError::Other(e.to_string()))?
                 .map_err(|e| CoreError::Other(e.to_string()))?;
-            let cleanup_target = item.target.clone();
-            let cleanup_worktree = item.worktree.clone();
-            let cleanup_branch = item.branch.clone();
-            let cleanup_backend = item.workspace_backend;
-            let cleanup = tokio::task::spawn_blocking(move || {
-                cleanup_managed_workspace(
-                    &cleanup_target,
-                    &cleanup_worktree,
-                    cleanup_branch.as_deref(),
-                    cleanup_backend,
+            // The visible checkout now contains the applied files, but they are
+            // still uncommitted there. Keep the managed workspace at the same
+            // content so a follow-up turn can read those files. Advancing its
+            // diff base also prevents Changes from offering them a second time.
+            let worktree = item.worktree.clone();
+            let checkpoint = tokio::task::spawn_blocking(move || {
+                am_vcs::checkpoint_worktree_with_excludes(
+                    &worktree,
+                    "Perpetual applied changes checkpoint",
+                    GENERATED_CONTEXT_FILES,
                 )
             })
             .await
             .map_err(|e| CoreError::Other(e.to_string()))?;
             let mut result = item.result;
             result.applied = true;
-            if cleanup.is_ok() {
-                am_db::repos::agent_thread_repo::upsert(
-                    &self.db.pool,
-                    thread_id,
-                    &result.repo_id,
-                    None,
-                    None,
-                    None,
-                    item.workspace_backend,
-                )
-                .await?;
-            } else if let Err(err) = cleanup {
-                self.activity(
-                    None,
-                    None,
-                    "thread.workspace_cleanup_failed",
-                    json!({
-                        "thread_id": thread_id,
-                        "repo_id": result.repo_id,
-                        "worktree_path": item.worktree.to_string_lossy(),
-                        "reason": err.to_string(),
-                    }),
-                )
-                .await?;
+            match checkpoint {
+                Ok(Some(base_ref)) => {
+                    am_db::repos::agent_thread_repo::upsert(
+                        &self.db.pool,
+                        thread_id,
+                        &result.repo_id,
+                        Some(&item.worktree.to_string_lossy()),
+                        item.branch.as_deref(),
+                        Some(&base_ref),
+                        item.workspace_backend,
+                    )
+                    .await?;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    result.blocker = Some(format!(
+                        "Changes were applied, but the managed workspace could not be checkpointed: {err}"
+                    ));
+                    blockers.push(format!(
+                        "{}: {}",
+                        result.repo_name,
+                        result.blocker.as_deref().unwrap_or_default()
+                    ));
+                    self.activity(
+                        None,
+                        None,
+                        "thread.workspace_checkpoint_failed",
+                        json!({
+                            "thread_id": thread_id,
+                            "repo_id": result.repo_id,
+                            "worktree_path": item.worktree.to_string_lossy(),
+                            "reason": err.to_string(),
+                        }),
+                    )
+                    .await?;
+                }
             }
             repos.push(result);
         }
@@ -1620,8 +1691,11 @@ impl AppCore {
                             TaskStatus::WaitingForLimit
                         } else {
                             match effective_status {
+                                // Approval requests are only actionable while
+                                // the provider session is alive. If it ended,
+                                // let the user send a follow-up or switch agents.
                                 SessionStatus::Completed if saw_approval_needed => {
-                                    TaskStatus::AwaitingApproval
+                                    TaskStatus::Paused
                                 }
                                 SessionStatus::Completed => TaskStatus::Review,
                                 SessionStatus::Interrupted => TaskStatus::Paused,
@@ -2850,6 +2924,49 @@ impl AppCore {
     }
 }
 
+/// Codex may run tools under a different Windows sandbox identity. Git then
+/// rejects the app-owned worktree as "dubious ownership". Trust only the
+/// managed worktrees for this provider process and its child tools.
+fn add_managed_git_safe_directories(
+    env: &mut Vec<(String, String)>,
+    paths: &[PathBuf],
+) -> Result<(), CoreError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let inherited = env
+        .iter()
+        .rev()
+        .find(|(key, _)| key == "GIT_CONFIG_COUNT")
+        .map(|(_, value)| value.clone())
+        .or_else(|| std::env::var("GIT_CONFIG_COUNT").ok());
+    let start = inherited
+        .as_deref()
+        .unwrap_or("0")
+        .parse::<usize>()
+        .map_err(|_| CoreError::Other("Invalid inherited GIT_CONFIG_COUNT".into()))?;
+    let count = start
+        .checked_add(paths.len())
+        .filter(|count| *count <= 256)
+        .ok_or_else(|| CoreError::Other("Too many Git config entries".into()))?;
+    for (offset, path) in paths.iter().enumerate() {
+        let index = start + offset;
+        env.push((format!("GIT_CONFIG_KEY_{index}"), "safe.directory".into()));
+        env.push((format!("GIT_CONFIG_VALUE_{index}"), git_safe_path(path)));
+    }
+    env.push(("GIT_CONFIG_COUNT".into(), count.to_string()));
+    Ok(())
+}
+
+fn git_safe_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}").replace('\\', "/")
+    } else {
+        raw.strip_prefix(r"\\?\").unwrap_or(&raw).replace('\\', "/")
+    }
+}
+
 pub(crate) fn permission_to_string(permission: PermissionPolicy) -> String {
     match permission {
         PermissionPolicy::ReadOnly => "read_only",
@@ -3583,6 +3700,24 @@ fn status_label(status: SessionStatus) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_git_trust_is_limited_to_named_worktrees() {
+        let mut env = vec![("GIT_CONFIG_COUNT".into(), "1".into())];
+        let paths = [
+            PathBuf::from("C:/qa/workbench/repo-a"),
+            PathBuf::from("C:/qa/workbench/repo-b"),
+        ];
+        add_managed_git_safe_directories(&mut env, &paths).unwrap();
+        assert!(env.contains(&("GIT_CONFIG_KEY_1".into(), "safe.directory".into())));
+        assert!(env.contains(&("GIT_CONFIG_VALUE_1".into(), "C:/qa/workbench/repo-a".into())));
+        assert!(env.contains(&("GIT_CONFIG_VALUE_2".into(), "C:/qa/workbench/repo-b".into())));
+        assert_eq!(env.last(), Some(&("GIT_CONFIG_COUNT".into(), "3".into())));
+        assert_eq!(
+            git_safe_path(Path::new(r"\\?\C:\qa\workbench\repo-a")),
+            "C:/qa/workbench/repo-a"
+        );
+    }
 
     fn test_thread() -> AgentThread {
         let now = chrono::Utc::now();
