@@ -1519,14 +1519,14 @@ fn build_prompt(task: &Task) -> String {
         }
     }
     prompt.push_str(
-        "\n\nBefore making changes, read TASK_CONTEXT.md and the agent-specific context file in this worktree for the current objective, progress, and next actions.",
+        "\n\nBefore making changes, read TASK_CONTEXT.md and the agent-specific context file in this worktree for the current objective, progress, and next actions. These Perpetual context files are routine session setup, so there is no need to announce that you are checking them. Share any findings, blockers, or decisions from them when relevant to the user.",
     );
     prompt
 }
 
 fn build_resume_prompt(task: &Task) -> String {
     format!(
-        "Continue the Perpetual task \"{}\" in this worktree. Read TASK_CONTEXT.md and the agent-specific context file first, then proceed from the recorded progress and next actions.",
+        "Continue the Perpetual task \"{}\" in this worktree. Read TASK_CONTEXT.md and the agent-specific context file first, then proceed from the recorded progress and next actions. Checking these Perpetual context files is routine session setup; focus user-facing updates on relevant progress, findings, and blockers.",
         task.title
     )
 }

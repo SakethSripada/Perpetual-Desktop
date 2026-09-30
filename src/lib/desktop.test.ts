@@ -68,6 +68,28 @@ describe('provider continuity UI', () => {
     expect(items).toHaveLength(1);
     expect(items[0].type).toBe('event');
   });
+  it('hides Perpetual context reads while keeping other tool work visible', () => {
+    const items = buildTranscriptItems({
+      thread: null,
+      events: [
+        event({ id: 'a', data: { call_id: 'setup', input: { command: 'cat TASK_CONTEXT.md' } } }),
+        event({
+          id: 'b',
+          kind: 'tool_result',
+          data: { call_id: 'setup', summary: 'Internal notes' },
+        }),
+        event({ id: 'c', data: { call_id: 'work', input: { command: 'git status' } } }),
+        event({ id: 'd', kind: 'tool_result', data: { call_id: 'work', summary: 'Clean' } }),
+      ],
+      activities: [],
+      queued: [],
+      cloudRuns: [],
+    });
+    expect(items.filter((item) => item.type === 'event').map((item) => item.event.id)).toEqual([
+      'c',
+      'd',
+    ]);
+  });
 });
 describe('account continuity', () => {
   const activity = (kind: string, payload: unknown) => ({

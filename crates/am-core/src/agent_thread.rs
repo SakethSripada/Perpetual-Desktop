@@ -444,6 +444,44 @@ impl AppCore {
         let mut thread = am_db::repos::agent_thread::get(&self.db.pool, thread_id)
             .await?
             .ok_or(CoreError::NotFound)?;
+        // A standalone greeting needs no provider session, workspace, or
+        // continuity-file read. Keep the response local and immediate.
+        if let Some(msg) = message.as_ref().filter(|msg| msg.echo_user_message) {
+            let greeting_only = is_standalone_greeting(&thread.objective)
+                && (thread.status == TaskStatus::Draft
+                    || (thread.status == TaskStatus::Done && thread.active_agent.is_none()));
+            if greeting_only
+                && am_db::repos::agent_thread_repo::list_for_thread(&self.db.pool, thread_id)
+                    .await?
+                    .is_empty()
+            {
+                if is_standalone_greeting(&msg.text) {
+                    let (saved, user, reply, turn_id) =
+                        persist_greeting(&self.db, thread, agent, msg).await?;
+                    self.events.publish(AppEvent::AgentThreadEvent(user));
+                    self.events.publish(AppEvent::AgentThreadEvent(reply));
+                    self.events.publish(AppEvent::AgentThreadUpdated(saved));
+                    return Ok(turn_id);
+                }
+                // The first substantive message becomes the actual objective.
+                if thread.status == TaskStatus::Done {
+                    if thread.title == thread.objective {
+                        thread.title = msg
+                            .text
+                            .lines()
+                            .next()
+                            .unwrap_or("")
+                            .chars()
+                            .take(80)
+                            .collect();
+                    }
+                    thread.objective = msg.text.clone();
+                    thread = am_db::repos::agent_thread::save(&self.db.pool, &thread).await?;
+                    self.events
+                        .publish(AppEvent::AgentThreadUpdated(thread.clone()));
+                }
+            }
+        }
         let requested_backend = self
             .thread_execution_backend(&thread, execution_backend)
             .await?;
@@ -3310,7 +3348,7 @@ fn build_thread_initial_prompt(
     }
     if context_files_available {
         prompt.push_str(
-            "\n\nBefore making changes, read TASK_CONTEXT.md and AGENTS.md in this workspace. Multiple repositories, if selected, are sibling directories under the current workspace root.",
+            "\n\nBefore making changes, read TASK_CONTEXT.md and AGENTS.md in this workspace. Multiple repositories, if selected, are sibling directories under the current workspace root. These Perpetual context files are routine session setup, so there is no need to announce that you are checking them. Share any findings, blockers, or decisions from them when relevant to the user.",
         );
     } else {
         prompt.push_str(
@@ -3321,10 +3359,75 @@ fn build_thread_initial_prompt(
     prompt
 }
 
+fn is_standalone_greeting(message: &str) -> bool {
+    let greeting = message
+        .trim()
+        .trim_end_matches(['!', '.', '?'])
+        .trim()
+        .to_ascii_lowercase();
+    matches!(
+        greeting.as_str(),
+        "hi" | "hello" | "hey" | "hi there" | "hello there" | "hey there"
+    )
+}
+
+async fn persist_greeting(
+    db: &am_db::Db,
+    mut thread: AgentThread,
+    agent: AgentKind,
+    message: &PendingThreadMessage,
+) -> Result<(AgentThread, AgentThreadEvent, AgentThreadEvent, String), CoreError> {
+    // Transcript messages require a real turn row, even when Perpetual answers
+    // locally and never launches the provider.
+    let turn = am_db::repos::agent_turn::create(
+        &db.pool,
+        &thread.id,
+        agent,
+        &thread.permission,
+        thread.execution_backend,
+        None,
+        thread.model.as_deref(),
+        thread.reasoning.as_deref(),
+        thread.local_provider,
+        thread.local_base_url.as_deref(),
+        thread.model_target,
+        thread.compute_lease_id.as_deref(),
+        thread.compute_provider,
+        thread.estimated_compute_cost_usd,
+        thread.fallback_model_target,
+        None,
+        None,
+    )
+    .await?;
+    let user = user_thread_event(
+        &thread.id,
+        &turn.id,
+        message.text.trim(),
+        message.client_message_id.as_deref(),
+    );
+    let reply = AgentThreadEvent {
+        id: new_id(),
+        thread_id: thread.id.clone(),
+        turn_id: turn.id.clone(),
+        role: "assistant".into(),
+        kind: "assistant_text".into(),
+        text: Some("Hi! What would you like to work on?".into()),
+        client_message_id: None,
+        data: json!({ "source": "perpetual" }),
+        ts: now(),
+    };
+    am_db::repos::agent_thread_message::insert(&db.pool, &user).await?;
+    am_db::repos::agent_thread_message::insert(&db.pool, &reply).await?;
+    am_db::repos::agent_turn::finish(&db.pool, &turn.id, SessionState::Completed).await?;
+    thread.status = TaskStatus::Done;
+    let thread = am_db::repos::agent_thread::save(&db.pool, &thread).await?;
+    Ok((thread, user, reply, turn.id))
+}
+
 fn build_thread_resume_prompt(thread: &AgentThread, context_files_available: bool) -> String {
     let mut prompt = if context_files_available {
         format!(
-            "Continue the Perpetual session \"{}\". Read TASK_CONTEXT.md and AGENTS.md first, then proceed from the recorded progress and next actions.",
+            "Continue the Perpetual session \"{}\". Read TASK_CONTEXT.md and AGENTS.md first, then proceed from the recorded progress and next actions. Checking these Perpetual context files is routine session setup; focus user-facing updates on relevant progress, findings, and blockers.",
             thread.title
         )
     } else {
@@ -3785,6 +3888,45 @@ mod tests {
         let prompt = build_thread_initial_prompt(&test_thread(), "fix auth", false);
         assert!(prompt.contains("current repository working tree directly"));
         assert!(!prompt.contains("TASK_CONTEXT.md"));
+    }
+
+    #[test]
+    fn standalone_greeting_only_matches_salutations() {
+        assert!(is_standalone_greeting("Hi!"));
+        assert!(is_standalone_greeting(" hello there "));
+        assert!(!is_standalone_greeting("Hi, fix the login bug"));
+        assert!(!is_standalone_greeting("Hello from the test suite"));
+    }
+
+    #[tokio::test]
+    async fn greeting_persists_with_a_valid_turn() {
+        let db = am_db::Db::connect_in_memory().await.unwrap();
+        let thread = am_db::repos::agent_thread::create(
+            &db.pool,
+            NewAgentThread {
+                title: "Hi".into(),
+                objective: Some("Hi".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let message = PendingThreadMessage::public("Hi".into(), Some("client-1".into()));
+        let (saved, _, _, turn_id) = persist_greeting(&db, thread, AgentKind::Codex, &message)
+            .await
+            .unwrap();
+        assert_eq!(saved.status, TaskStatus::Done);
+        let turn = am_db::repos::agent_turn::get(&db.pool, &turn_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(turn.state, SessionState::Completed);
+        let events = am_db::repos::agent_thread_message::list_for_turn(&db.pool, &turn_id)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].client_message_id.as_deref(), Some("client-1"));
+        assert_eq!(events[1].data["source"], "perpetual");
     }
 
     #[test]

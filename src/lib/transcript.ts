@@ -94,8 +94,27 @@ export function buildTranscriptItems(input: {
   const sortKeys = new Map<string, number>();
   let suppressedUsageLimit = false;
   let limitTransitionAdded = false;
+  // Perpetual's continuity file is read as session setup. Keep those tool
+  // traces out of the conversation while leaving ordinary agent work visible.
+  const contextCalls = new Set<string>();
+  for (const event of input.events) {
+    if (event.kind !== 'tool_use') continue;
+    const data = event.data as { call_id?: unknown; input?: unknown } | null;
+    if (!mentionsTaskContext(data?.input)) continue;
+    if (typeof data?.call_id === 'string') contextCalls.add(`${event.turn_id}:${data.call_id}`);
+  }
 
   for (const event of input.events) {
+    if (
+      event.kind === 'tool_use' &&
+      mentionsTaskContext((event.data as { input?: unknown } | null)?.input)
+    )
+      continue;
+    if (event.kind === 'tool_result') {
+      const callId = (event.data as { call_id?: unknown } | null)?.call_id;
+      if (typeof callId === 'string' && contextCalls.has(`${event.turn_id}:${callId}`)) continue;
+    }
+    if (event.kind === 'file_changed' && mentionsTaskContext(event.text)) continue;
     if (isRoutineEvent(event)) {
       if (event.kind === 'usage_limit') suppressedUsageLimit = true;
       continue;
@@ -183,6 +202,12 @@ export function buildTranscriptItems(input: {
     sortKeys.set(id, key);
   }
   return items.sort((a, b) => itemTs(a, input, sortKeys) - itemTs(b, input, sortKeys));
+}
+
+function mentionsTaskContext(value: unknown): boolean {
+  return /\bTASK_CONTEXT\.md\b/i.test(
+    typeof value === 'string' ? value : JSON.stringify(value ?? ''),
+  );
 }
 
 /**

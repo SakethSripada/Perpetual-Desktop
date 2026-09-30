@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { DIRECT_RELEASE, REPO, detectPlatform, type Platform } from '../lib/site';
+import { fileMatchesSha256 } from '../lib/checksum';
 import { AppleLogo, WindowsLogo } from './Mark';
 
 export type DownloadPlatform = Exclude<Platform, 'other'>;
@@ -11,6 +12,10 @@ type DownloadFlow = {
 
 const DownloadContext = createContext<DownloadFlow | null>(null);
 const CLONE_COMMAND = `git clone ${REPO}.git`;
+type Verification = {
+  status: 'idle' | 'checking' | 'matched' | 'mismatch' | 'error';
+  name?: string;
+};
 
 export function useDownloadFlow(): DownloadFlow {
   const flow = useContext(DownloadContext);
@@ -34,9 +39,15 @@ export function DownloadProvider({ children }: { children: ReactNode }) {
 
 function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
+  const [checksumCopied, setChecksumCopied] = useState(false);
+  const [verification, setVerification] = useState<Verification>({ status: 'idle' });
   const asset = DIRECT_RELEASE[platform];
   const isWindows = platform === 'windows';
+  const checksumCommand = isWindows
+    ? `Get-FileHash .\\${asset.name} -Algorithm SHA256`
+    : `shasum -a 256 ${asset.name}`;
 
   useEffect(() => {
     const element = dialog.current;
@@ -52,104 +63,214 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
     }
   }
 
+  async function verifyFile(file: File | undefined) {
+    if (!file) return;
+    setVerification({ status: 'checking', name: file.name });
+    try {
+      setVerification({
+        status: (await fileMatchesSha256(file, asset.sha256)) ? 'matched' : 'mismatch',
+        name: file.name,
+      });
+    } catch {
+      setVerification({ status: 'error', name: file.name });
+    }
+  }
+
+  async function copyChecksumCommand() {
+    try {
+      await navigator.clipboard.writeText(checksumCommand);
+      setChecksumCopied(true);
+    } catch {
+      setChecksumCopied(false);
+    }
+  }
+
   return (
     <dialog
       ref={dialog}
       onClose={onClose}
       aria-labelledby="install-dialog-title"
-      className="m-auto max-h-[88dvh] w-[min(92vw,640px)] overflow-y-auto rounded-3xl border border-line-strong bg-card p-0 text-ink shadow-[0_30px_100px_rgba(0,0,0,0.75)] backdrop:bg-black/75"
+      className="m-auto max-h-[88dvh] w-[min(92vw,520px)] overflow-y-auto rounded-2xl border border-line-strong bg-card p-0 text-ink shadow-[0_30px_100px_rgba(0,0,0,0.75)] backdrop:bg-black/75"
     >
-      <div className="p-6 sm:p-8">
+      <div className="p-6 sm:p-7">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="flex items-center gap-2 text-[13px] font-medium text-sage">
               {isWindows ? <WindowsLogo size={15} /> : <AppleLogo size={15} />}
               {isWindows ? 'Windows x64' : 'macOS universal'}
             </p>
-            <h2 id="install-dialog-title" className="mt-2 text-[28px] font-semibold tracking-tight">
-              Your download is starting
+            <h2 id="install-dialog-title" className="mt-2 text-[24px] font-semibold tracking-tight">
+              <span className="text-sage">Download</span> started
             </h2>
-            <p className="mt-2 text-[14px] leading-6 text-muted">
-              If it does not start,{' '}
-              <a className="text-ink underline underline-offset-4" href={asset.url}>
-                download {asset.name} from GitHub
-              </a>
-              .
+            <p className="mt-1.5 text-[14px] leading-6 text-muted">
+              When it finishes, open the downloaded file to install Perpetual.
             </p>
           </div>
           <button
             type="button"
             onClick={() => dialog.current?.close()}
-            aria-label="Close installation instructions"
-            className="flex size-8 shrink-0 items-center justify-center rounded-full text-[23px] leading-none text-muted transition-colors hover:bg-white/10 hover:text-ink"
+            aria-label="Close download instructions"
+            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-[23px] leading-none text-muted transition-colors hover:bg-white/10 hover:text-ink"
           >
             ×
           </button>
         </div>
 
-        <div className="mt-6 space-y-5 text-[14px] leading-6 text-muted">
-          <section>
-            <h3 className="font-medium text-ink">1. Verify the download</h3>
-            <p className="mt-2">
-              In the folder where you saved the file, run this command and compare the result with{' '}
-              <a className="text-ink underline underline-offset-4" href={DIRECT_RELEASE.checksums}>
-                SHA256SUMS.txt
-              </a>
-              :
-            </p>
-            <code className="mt-2 block overflow-x-auto rounded-xl bg-black/30 p-3 text-[12px] text-ink">
-              {isWindows
-                ? `Get-FileHash .\\${asset.name} -Algorithm SHA256`
-                : `shasum -a 256 ${asset.name}`}
-            </code>
-            <p className="mt-2 text-[12px]">Expected SHA-256:</p>
-            <code className="block break-all text-[12px] text-ink">{asset.sha256}</code>
-          </section>
-
-          <section>
-            <h3 className="font-medium text-ink">2. Open Perpetual</h3>
+        <div className="mt-6 text-[14px] leading-6 text-muted">
+          <section className="rounded-xl border border-sage/20 bg-sage/[0.045] p-4">
+            <h3 className="font-medium text-sage">Install Perpetual</h3>
             {isWindows ? (
               <p className="mt-2">
-                Run the installer. If SmartScreen says “Windows protected your PC,” choose{' '}
-                <strong className="font-medium text-ink">More info</strong> →{' '}
-                <strong className="font-medium text-ink">Run anyway</strong> only if the source and
-                checksum match and you trust this release. Some managed PCs and Smart App Control
-                settings do not allow unsigned apps; do not turn off system protection.
+                Open <span className="font-medium text-ink">{asset.name}</span> from your Downloads
+                folder and follow the installer. If SmartScreen appears, choose{' '}
+                <strong className="font-medium text-ink">More info</strong>
+                <span className="sr-only">, then </span>
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  className="mx-1 inline size-4 align-[-0.18em] text-sage"
+                >
+                  <path
+                    d="M2.5 10h14m-5-5 5 5-5 5"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>{' '}
+                <strong className="font-medium text-ink">Run anyway</strong>. You can verify the
+                checksum below. Managed PCs may block unsigned apps.
               </p>
             ) : (
               <p className="mt-2">
-                Open the DMG and drag Perpetual to Applications. If macOS blocks its first launch,
-                try opening it once, then go to{' '}
+                Open <span className="font-medium text-ink">{asset.name}</span> and drag Perpetual
+                to Applications. If macOS blocks the first launch, check the download, then go to{' '}
                 <strong className="font-medium text-ink">
                   System Settings → Privacy &amp; Security → Open Anyway
-                </strong>{' '}
-                after verifying the download.
+                </strong>
+                .
               </p>
             )}
           </section>
-
-          <section className="rounded-2xl border border-line bg-white/[0.035] p-4">
-            <h3 className="font-medium text-ink">You can also run it from source</h3>
-            <p className="mt-1">
-              Clone the public repository, then follow the{' '}
+          <p className="mt-4 text-[13px]">
+            Download not starting?{' '}
+            <a className="font-medium text-sage underline underline-offset-4" href={asset.url}>
+              Download from GitHub
+            </a>
+          </p>
+          <details className="group mt-5 border-t border-line pt-4">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[13px] font-medium text-sage transition-colors hover:text-ink [&::-webkit-details-marker]:hidden">
+              Verify the download with a SHA-256 checksum
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 20 20"
+                fill="none"
+                className="size-4 shrink-0 text-sage transition-transform group-open:rotate-180"
+              >
+                <path
+                  d="m5 7.5 5 5 5-5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </summary>
+            <div className="mt-4 text-[13px] leading-5">
+              <p>
+                Choose the installer you downloaded. Perpetual will check it in your browser; the
+                file is not uploaded.
+              </p>
+              <input
+                ref={fileInput}
+                type="file"
+                accept={isWindows ? '.exe' : '.dmg'}
+                className="sr-only"
+                aria-label="Choose downloaded installer to verify"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = '';
+                  void verifyFile(file);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                disabled={verification.status === 'checking'}
+                className="mt-3 rounded-lg border border-sage/35 px-3 py-2 text-[12px] font-medium text-sage transition-colors hover:bg-sage/10 disabled:cursor-wait disabled:opacity-60"
+              >
+                {verification.status === 'checking' ? 'Checking file…' : 'Choose downloaded file'}
+              </button>
+              <p aria-live="polite" className="mt-2 min-h-5">
+                {verification.status === 'checking' &&
+                  `Calculating SHA-256 for ${verification.name}…`}
+                {verification.status === 'matched' && (
+                  <span className="text-good">
+                    Verified: {verification.name} matches this release.
+                  </span>
+                )}
+                {verification.status === 'mismatch' && (
+                  <span className="text-warn">
+                    Checksum does not match. Do not open {verification.name}; download it again from
+                    GitHub.
+                  </span>
+                )}
+                {verification.status === 'error' &&
+                  'Could not check this file in your browser. Use the manual command below.'}
+              </p>
+              <div className="mt-4 border-t border-line pt-4">
+                <p className="font-medium text-sage">Verify manually</p>
+                <p>
+                  In your Downloads folder, run this command and compare the result with the{' '}
+                  <a
+                    className="text-sage underline underline-offset-4"
+                    href={DIRECT_RELEASE.checksums}
+                  >
+                    published checksums
+                  </a>
+                  .
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <code className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-black/30 px-3 py-2 text-[12px] text-ink">
+                    {checksumCommand}
+                  </code>
+                  <button
+                    type="button"
+                    aria-label="Copy checksum command"
+                    onClick={() => void copyChecksumCommand()}
+                    className="shrink-0 rounded-lg border border-line px-3 py-2 text-[12px] font-medium text-ink transition-colors hover:bg-white/10"
+                  >
+                    {checksumCopied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                <p className="mt-2">Expected SHA-256</p>
+                <code className="block break-all text-[12px] text-ink">{asset.sha256}</code>
+              </div>
+            </div>
+          </details>
+          <section className="mt-5 border-t border-line pt-4 text-[13px]">
+            <p>
+              Prefer to build from source?{' '}
               <a
-                className="text-ink underline underline-offset-4"
+                className="text-sage underline underline-offset-4"
                 href={`${REPO}#build-from-source`}
               >
-                README setup steps
+                View the setup guide
               </a>
               .
             </p>
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-              <code className="min-w-0 flex-1 overflow-x-auto rounded-xl bg-black/30 px-3 py-2 text-[12px] text-ink">
+            <div className="mt-2 flex items-center gap-2">
+              <code className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-black/30 px-3 py-2 font-mono text-[12px] text-ink">
                 {CLONE_COMMAND}
               </code>
               <button
                 type="button"
+                aria-label="Copy source command"
                 onClick={() => void copyCloneCommand()}
-                className="rounded-full bg-ink px-4 py-2 text-[12px] font-medium text-bg transition-colors hover:bg-white"
+                className="shrink-0 rounded-lg border border-line px-3 py-2 text-[12px] font-medium text-ink transition-colors hover:bg-white/10"
               >
-                {copied ? 'Copied' : 'Copy command'}
+                {copied ? 'Copied' : 'Copy'}
               </button>
             </div>
             <span className="sr-only" aria-live="polite">

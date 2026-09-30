@@ -114,7 +114,14 @@ export function Composer({
   const catalog = store.models.find((m) => m.agent === agent);
   const models = catalog?.models.filter((m) => m.available || m.id === model) ?? [];
   const chosenModel = catalog?.models.find((m) => m.id === model);
-  const efforts = chosenModel?.reasoning || catalog?.reasoning || [];
+  const defaultModel =
+    catalog?.models.find((m) => m.id === catalog.default_model) ??
+    catalog?.models.find((m) => m.default);
+  const displayedModel = chosenModel ?? (!model ? defaultModel : undefined);
+  const modelLabel = displayedModel?.label ?? (model || `${providerName(agent)} chooses`);
+  const defaultReasoning = catalog?.default_reasoning ?? displayedModel?.default_reasoning;
+  const reasoningLabel = reasoning || defaultReasoning || `${providerName(agent)} chooses`;
+  const efforts = displayedModel?.reasoning ?? catalog?.reasoning ?? [];
   const running =
     !!thread &&
     ['running', 'running_in_cloud', 'awaiting_approval', 'queued'].includes(thread.status);
@@ -263,7 +270,7 @@ export function Composer({
           return;
         } else if (command.name === 'status')
           toast.info(
-            `${providerName(agent)} · ${chosenModel?.label || 'Default model'} · ${ACCESS[permission].label}${account ? ` · ${accountName(account)}` : ''}`,
+            `${providerName(agent)} · ${modelLabel} · ${reasoningLabel} reasoning · ${ACCESS[permission].label}${account ? ` · ${accountName(account)}` : ''}`,
           );
         else onCommand(command.name);
         setText('');
@@ -391,10 +398,10 @@ export function Composer({
         <div className="flex items-center gap-0.5 px-2 pb-2">
           <MenuRoot>
             <MenuTrigger asChild>
-              <button className="flex h-8 max-w-56 items-center gap-2 rounded-lg px-2 text-xs text-ink/90 hover:bg-hover data-[state=open]:bg-hover">
+              <button className="flex h-8 max-w-72 items-center gap-2 rounded-lg px-2 text-xs text-ink/90 hover:bg-hover data-[state=open]:bg-hover">
                 <ProviderLogo agent={agent} size={15} />
-                <span className="truncate">{chosenModel?.label || providerName(agent)}</span>
-                {reasoning && <span className="text-muted capitalize">{reasoning}</span>}
+                <span className="truncate">{modelLabel}</span>
+                <span className="shrink-0 text-muted capitalize">{reasoningLabel}</span>
                 <ChevronDown size={12} className="shrink-0 text-muted" />
               </button>
             </MenuTrigger>
@@ -419,11 +426,9 @@ export function Composer({
               <MenuSub>
                 <MenuSubTrigger>
                   <span className="flex-1">Model</span>
-                  <span className="max-w-28 truncate text-xs text-muted">
-                    {chosenModel?.label || 'Default'}
-                  </span>
+                  <span className="max-w-28 truncate text-xs text-muted">{modelLabel}</span>
                 </MenuSubTrigger>
-                <MenuSubContent className="w-60">
+                <MenuSubContent className="w-72">
                   <MenuRadioGroup
                     value={model}
                     onValueChange={(v) => {
@@ -431,7 +436,9 @@ export function Composer({
                       setReasoning('');
                     }}
                   >
-                    <MenuRadioItem value="">Default</MenuRadioItem>
+                    <MenuRadioItem value="">
+                      Default · {defaultModel?.label ?? `${providerName(agent)} chooses`}
+                    </MenuRadioItem>
                     {models.map((m) => (
                       <MenuRadioItem key={m.id} value={m.id}>
                         <span className="truncate">{m.label}</span>
@@ -443,11 +450,15 @@ export function Composer({
               <MenuSub>
                 <MenuSubTrigger disabled={!efforts.length}>
                   <span className="flex-1">Reasoning</span>
-                  <span className="text-xs text-muted capitalize">{reasoning || 'Default'}</span>
+                  <span className="max-w-28 truncate text-xs text-muted capitalize">
+                    {reasoningLabel}
+                  </span>
                 </MenuSubTrigger>
                 <MenuSubContent className="w-44">
                   <MenuRadioGroup value={reasoning} onValueChange={setReasoning}>
-                    <MenuRadioItem value="">Default</MenuRadioItem>
+                    <MenuRadioItem value="">
+                      Default · {defaultReasoning ?? `${providerName(agent)} chooses`}
+                    </MenuRadioItem>
                     {efforts.map((r) => (
                       <MenuRadioItem key={r} value={r}>
                         <span className="capitalize">{r}</span>

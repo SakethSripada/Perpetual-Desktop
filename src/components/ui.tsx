@@ -306,7 +306,7 @@ export function Confirm({
   description?: ReactNode;
   confirmLabel: string;
   danger?: boolean;
-  /** Shown in a badge beside the title. Defaults to a trash can for danger. */
+  /** Optional symbol beside the title. Defaults to a trash can for danger. */
   icon?: ReactNode;
   onConfirm: () => Promise<unknown> | void;
 }) {
@@ -321,49 +321,49 @@ export function Confirm({
       setBusy(false);
     }
   };
-  const badge = icon ?? (danger ? <Trash2 size={16} /> : null);
+  const badge = icon ?? (danger ? <Trash2 size={19} strokeWidth={1.8} /> : null);
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 animate-fade-in bg-black/55" />
+        <Dialog.Overlay className="fixed inset-0 z-40 animate-fade-in bg-black/60" />
         <Dialog.Content
           onOpenAutoFocus={focusFirstField}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.defaultPrevented) {
-              e.preventDefault();
-              void confirm();
-            }
-          }}
-          style={{ width: 'min(380px, calc(100vw - 32px))' }}
-          className="fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 animate-pop-in rounded-2xl border border-line bg-elevated p-5 text-ink shadow-[0_24px_70px_-20px_rgba(0,0,0,0.6)] outline-none"
+          style={{ width: 'min(420px, calc(100vw - 32px))' }}
+          className="fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 animate-pop-in overflow-hidden rounded-2xl border border-line bg-surface text-ink shadow-2xl outline-none"
         >
-          <div className="flex gap-3.5">
-            {badge && (
-              <span
-                className={cn(
-                  'flex size-9 shrink-0 items-center justify-center rounded-full',
-                  danger ? 'bg-danger/12 text-danger' : 'bg-hover text-muted',
-                )}
-              >
-                {badge}
-              </span>
-            )}
-            <div className="min-w-0 pt-0.5">
-              <Dialog.Title className="text-[15px] font-semibold tracking-[-0.01em]">
+          <div className="px-6 pt-6 pb-6">
+            <div className="flex items-center gap-3">
+              {badge && (
+                <span
+                  className={cn(
+                    'flex shrink-0 items-center',
+                    danger ? 'text-danger' : 'text-muted',
+                  )}
+                >
+                  {badge}
+                </span>
+              )}
+              <Dialog.Title className="min-w-0 text-base leading-6 font-semibold tracking-[-0.01em]">
                 {title}
               </Dialog.Title>
-              <Dialog.Description
-                className={cn('text-[13px] leading-5 text-muted', description && 'mt-1')}
-              >
-                {description}
-              </Dialog.Description>
             </div>
+            <Dialog.Description
+              className={cn('text-[13px] leading-5 text-muted', description && 'mt-4')}
+            >
+              {description}
+            </Dialog.Description>
           </div>
-          <div className="mt-5 flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => onOpenChange(false)}>
+          <div className="flex justify-end gap-2 border-t border-line/70 bg-elevated/30 px-6 py-4">
+            <Button
+              className="h-9 min-w-20"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => onOpenChange(false)}
+            >
               Cancel
             </Button>
             <Button
+              className="h-9 min-w-20"
               variant={danger ? 'danger' : 'primary'}
               loading={busy}
               onClick={() => void confirm()}
