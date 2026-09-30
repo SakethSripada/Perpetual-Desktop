@@ -95,12 +95,12 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
       <div className="p-6 sm:p-7">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="flex items-center gap-2 text-[13px] font-medium text-sage">
+            <p className="flex items-center gap-2 text-[13px] font-medium text-muted">
               {isWindows ? <WindowsLogo size={15} /> : <AppleLogo size={15} />}
               {isWindows ? 'Windows x64' : 'macOS universal'}
             </p>
             <h2 id="install-dialog-title" className="mt-2 text-[24px] font-semibold tracking-tight">
-              <span className="text-sage">Download</span> started
+              Download started
             </h2>
             <p className="mt-1.5 text-[14px] leading-6 text-muted">
               When it finishes, open the downloaded file to install Perpetual.
@@ -117,7 +117,7 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
         </div>
 
         <div className="mt-6 text-[14px] leading-6 text-muted">
-          <section className="rounded-xl border border-sage/20 bg-sage/[0.045] p-4">
+          <section className="rounded-xl border border-line bg-white/[0.025] p-4">
             <h3 className="font-medium text-sage">Install Perpetual</h3>
             {isWindows ? (
               <p className="mt-2">
@@ -129,7 +129,7 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
                   aria-hidden="true"
                   viewBox="0 0 20 20"
                   fill="none"
-                  className="mx-1 inline size-4 align-[-0.18em] text-sage"
+                  className="mx-1 inline size-4 align-[-0.18em] text-ink"
                 >
                   <path
                     d="M2.5 10h14m-5-5 5 5-5 5"
@@ -155,18 +155,18 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
           </section>
           <p className="mt-4 text-[13px]">
             Download not starting?{' '}
-            <a className="font-medium text-sage underline underline-offset-4" href={asset.url}>
+            <a className="font-medium text-ink underline underline-offset-4" href={asset.url}>
               Download from GitHub
             </a>
           </p>
           <details className="group mt-5 border-t border-line pt-4">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[13px] font-medium text-sage transition-colors hover:text-ink [&::-webkit-details-marker]:hidden">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[13px] font-medium text-ink transition-colors hover:text-muted [&::-webkit-details-marker]:hidden">
               Verify the download with a SHA-256 checksum
               <svg
                 aria-hidden="true"
                 viewBox="0 0 20 20"
                 fill="none"
-                className="size-4 shrink-0 text-sage transition-transform group-open:rotate-180"
+                className="size-4 shrink-0 text-muted transition-transform group-open:rotate-180"
               >
                 <path
                   d="m5 7.5 5 5 5-5"
@@ -198,7 +198,7 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
                 type="button"
                 onClick={() => fileInput.current?.click()}
                 disabled={verification.status === 'checking'}
-                className="mt-3 rounded-lg border border-sage/35 px-3 py-2 text-[12px] font-medium text-sage transition-colors hover:bg-sage/10 disabled:cursor-wait disabled:opacity-60"
+                className="mt-3 rounded-lg border border-line-strong px-3 py-2 text-[12px] font-medium text-ink transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"
               >
                 {verification.status === 'checking' ? 'Checking file…' : 'Choose downloaded file'}
               </button>
@@ -220,11 +220,11 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
                   'Could not check this file in your browser. Use the manual command below.'}
               </p>
               <div className="mt-4 border-t border-line pt-4">
-                <p className="font-medium text-sage">Verify manually</p>
+                <p className="font-medium text-ink">Verify manually</p>
                 <p>
                   In your Downloads folder, run this command and compare the result with the{' '}
                   <a
-                    className="text-sage underline underline-offset-4"
+                    className="text-ink underline underline-offset-4"
                     href={DIRECT_RELEASE.checksums}
                   >
                     published checksums
@@ -253,7 +253,7 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
             <p>
               Prefer to build from source?{' '}
               <a
-                className="text-sage underline underline-offset-4"
+                className="text-ink underline underline-offset-4"
                 href={`${REPO}#build-from-source`}
               >
                 View the setup guide
