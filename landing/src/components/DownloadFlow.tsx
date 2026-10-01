@@ -101,7 +101,7 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
             </p>
             <h2
               id="install-dialog-title"
-              className="mt-2 text-[24px] font-semibold tracking-tight text-[#d6b8a2]"
+              className="mt-2 text-[24px] font-semibold tracking-tight text-sage"
             >
               Download started
             </h2>
