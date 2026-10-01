@@ -99,7 +99,10 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
               {isWindows ? <WindowsLogo size={15} /> : <AppleLogo size={15} />}
               {isWindows ? 'Windows x64' : 'macOS universal'}
             </p>
-            <h2 id="install-dialog-title" className="mt-2 text-[24px] font-semibold tracking-tight">
+            <h2
+              id="install-dialog-title"
+              className="mt-2 text-[24px] font-semibold tracking-tight text-[#d6b8a2]"
+            >
               Download started
             </h2>
             <p className="mt-1.5 text-[14px] leading-6 text-muted">
