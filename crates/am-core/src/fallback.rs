@@ -101,6 +101,35 @@ impl AppCore {
         Ok(FallbackPolicy::from(&policy).decide(current, &statuses, reset_at))
     }
 
+    pub(crate) async fn workflow_limit_behavior(&self, thread_id: &str) -> String {
+        am_db::repos::work_graph::get_node_for_thread(&self.db.pool, thread_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|node| node.workflow_limit_behavior)
+            .unwrap_or_else(|| "inherit".into())
+    }
+
+    pub(crate) async fn fallback_decision_for_thread(
+        &self,
+        thread_id: &str,
+        current: AgentKind,
+        reset_at: Option<DateTime<Utc>>,
+    ) -> Result<FallbackDecision, CoreError> {
+        let behavior = self.workflow_limit_behavior(thread_id).await;
+        if behavior == "wait" {
+            return Ok(FallbackDecision::Wait { reset_at });
+        }
+        if behavior == "inherit" {
+            return self.fallback_decision(current, reset_at).await;
+        }
+        let statuses = self.detect_agents().await?;
+        let policy = self.get_limit_policy().await.unwrap_or_default();
+        let mut fallback = FallbackPolicy::from(&policy);
+        fallback.auto_switch = true;
+        Ok(fallback.decide(current, &statuses, reset_at))
+    }
+
     pub(crate) async fn apply_fallback_decision(
         &self,
         task_id: &str,
@@ -108,7 +137,21 @@ impl AppCore {
         current: AgentKind,
         reset_at: Option<DateTime<Utc>>,
     ) -> Result<FallbackDecision, CoreError> {
-        let decision = self.fallback_decision(current, reset_at).await?;
+        let behavior = am_db::repos::work_graph::get_node_for_task(&self.db.pool, task_id)
+            .await?
+            .map(|node| node.workflow_limit_behavior)
+            .unwrap_or_else(|| "inherit".into());
+        let decision = match behavior.as_str() {
+            "wait" => FallbackDecision::Wait { reset_at },
+            "switch" => {
+                let statuses = self.detect_agents().await?;
+                let policy = self.get_limit_policy().await.unwrap_or_default();
+                let mut fallback = FallbackPolicy::from(&policy);
+                fallback.auto_switch = true;
+                fallback.decide(current, &statuses, reset_at)
+            }
+            _ => self.fallback_decision(current, reset_at).await?,
+        };
         match decision.clone() {
             FallbackDecision::Switch { agent, switch_back } => {
                 if let Ok(task) = am_db::repos::task::update(

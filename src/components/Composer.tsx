@@ -60,6 +60,7 @@ export interface RunOptions {
 const ACCESS: Record<PermissionPolicy, { label: string; detail: string }> = {
   read_only: { label: 'Read only', detail: 'Can read files but not change them' },
   workspace_write: { label: 'Workspace', detail: 'Can edit files in the task workspace' },
+  ask: { label: 'Ask first', detail: 'Requests approval for gated actions' },
   autonomous: { label: 'Full access', detail: 'Can run any command without asking' },
 };
 
@@ -242,12 +243,13 @@ export function Composer({
           workspace: 'workspace_write',
           workspace_write: 'workspace_write',
           'workspace-write': 'workspace_write',
+          ask: 'ask',
           full: 'autonomous',
           autonomous: 'autonomous',
           'full-access': 'autonomous',
         };
         if (!map[command.argument]) {
-          toast.info('Use read-only, workspace, or full-access.');
+          toast.info('Use read-only, workspace, ask, or full-access.');
           return;
         }
         setPermission(map[command.argument]);

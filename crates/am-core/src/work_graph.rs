@@ -28,6 +28,7 @@ const LAYOUT_Y0: f64 = 80.0;
 #[derive(Debug, Clone, Default)]
 pub struct WorkRunModelOptions {
     pub model: Option<String>,
+    pub reasoning: Option<String>,
     pub model_target: Option<ModelTargetKind>,
     pub compute_profile: Option<String>,
     pub max_compute_usd: Option<f64>,
@@ -106,6 +107,22 @@ impl AppCore {
     }
 
     pub async fn create_work_node(&self, mut input: NewWorkNode) -> Result<WorkNode, CoreError> {
+        self.validate_work_parent(&input.project_id, None, input.parent_id.as_deref())
+            .await?;
+        if input
+            .permission
+            .as_deref()
+            .is_some_and(|p| !matches!(p, "read_only" | "workspace_write" | "ask" | "autonomous"))
+        {
+            return Err(CoreError::Other("invalid workflow permission".into()));
+        }
+        if input
+            .limit_behavior
+            .as_deref()
+            .is_some_and(|v| !matches!(v, "inherit" | "switch" | "wait"))
+        {
+            return Err(CoreError::Other("invalid rate limit behavior".into()));
+        }
         let kind = input.kind.unwrap_or(WorkNodeKind::Task);
         // No explicit coordinates means the caller doesn't care about
         // placement: give a provisional slot now and let
@@ -145,6 +162,10 @@ impl AppCore {
                         &node.id,
                         WorkNodeUpdate {
                             parent_id: input.parent_id.clone(),
+                            workflow_model: Some(input.model.clone().unwrap_or_default()),
+                            workflow_reasoning: Some(input.reasoning.clone().unwrap_or_default()),
+                            workflow_permission: input.permission.clone(),
+                            workflow_limit_behavior: input.limit_behavior.clone(),
                             position_x: input.position_x,
                             position_y: input.position_y,
                             ..Default::default()
@@ -166,11 +187,11 @@ impl AppCore {
                         objective: input.description.clone(),
                         repo_ids: repo_ids.clone(),
                         preferred_agent: input.primary_agent,
-                        permission: None,
+                        permission: input.permission.clone(),
                         execution_backend: None,
                         force_managed_workspace: false,
                         model: input.model.clone(),
-                        reasoning: None,
+                        reasoning: input.reasoning.clone(),
                         local_provider: None,
                         local_base_url: input.compute_profile.clone(),
                         model_target: input.model_target,
@@ -191,6 +212,10 @@ impl AppCore {
                         &node.id,
                         WorkNodeUpdate {
                             parent_id: input.parent_id.clone(),
+                            workflow_model: Some(input.model.clone().unwrap_or_default()),
+                            workflow_reasoning: Some(input.reasoning.clone().unwrap_or_default()),
+                            workflow_permission: input.permission.clone(),
+                            workflow_limit_behavior: input.limit_behavior.clone(),
                             position_x: input.position_x,
                             position_y: input.position_y,
                             ..Default::default()
@@ -263,6 +288,23 @@ impl AppCore {
         let before = am_db::repos::work_graph::get_node(&self.db.pool, node_id)
             .await?
             .ok_or(CoreError::NotFound)?;
+        if let Some(parent_id) = patch.parent_id.as_deref() {
+            self.validate_work_parent(&before.project_id, Some(node_id), Some(parent_id))
+                .await?;
+        }
+        if let Some(permission) = patch.workflow_permission.as_deref() {
+            if !matches!(
+                permission,
+                "read_only" | "workspace_write" | "ask" | "autonomous"
+            ) {
+                return Err(CoreError::Other("invalid workflow permission".into()));
+            }
+        }
+        if let Some(behavior) = patch.workflow_limit_behavior.as_deref() {
+            if !matches!(behavior, "inherit" | "switch" | "wait") {
+                return Err(CoreError::Other("invalid rate limit behavior".into()));
+            }
+        }
 
         if let Some(task_id) = before.task_id.clone() {
             let task_patch = TaskUpdate {
@@ -288,12 +330,19 @@ impl AppCore {
                 active_agent: patch.primary_agent,
                 preferred_agent: patch.primary_agent,
                 objective: patch.description.clone(),
+                model: patch.workflow_model.clone(),
+                reasoning: patch.workflow_reasoning.clone(),
+                permission: patch.workflow_permission.clone(),
                 ..Default::default()
             };
             let has_thread_change = thread_patch.title.is_some()
                 || thread_patch.status.is_some()
                 || thread_patch.active_agent.is_some()
                 || thread_patch.objective.is_some();
+            let has_thread_change = has_thread_change
+                || thread_patch.model.is_some()
+                || thread_patch.reasoning.is_some()
+                || thread_patch.permission.is_some();
             if has_thread_change {
                 self.update_agent_thread(&thread_id, thread_patch).await?;
             }
@@ -307,6 +356,10 @@ impl AppCore {
                 position_x: patch.position_x,
                 position_y: patch.position_y,
                 sort_order: patch.sort_order,
+                workflow_model: patch.workflow_model,
+                workflow_reasoning: patch.workflow_reasoning,
+                workflow_permission: patch.workflow_permission,
+                workflow_limit_behavior: patch.workflow_limit_behavior,
                 ..Default::default()
             }
         };
@@ -438,21 +491,8 @@ impl AppCore {
         let node = am_db::repos::work_graph::get_node(&self.db.pool, node_id)
             .await?
             .ok_or(CoreError::NotFound)?;
-        if parent_id.as_deref() == Some(node_id) {
-            return Err(CoreError::Other(
-                "a work node cannot be its own parent".into(),
-            ));
-        }
-        if let Some(parent_id) = parent_id.as_deref() {
-            let parent = am_db::repos::work_graph::get_node(&self.db.pool, parent_id)
-                .await?
-                .ok_or(CoreError::NotFound)?;
-            if parent.project_id != node.project_id {
-                return Err(CoreError::Other(
-                    "parent work node must be in the same project".into(),
-                ));
-            }
-        }
+        self.validate_work_parent(&node.project_id, Some(node_id), parent_id.as_deref())
+            .await?;
         let moved = am_db::repos::work_graph::move_node(
             &self.db.pool,
             node_id,
@@ -471,6 +511,81 @@ impl AppCore {
         )
         .await?;
         Ok(moved)
+    }
+
+    pub async fn reorder_work_nodes(
+        &self,
+        project_id: &str,
+        parent_id: Option<&str>,
+        node_ids: Vec<String>,
+    ) -> Result<(), CoreError> {
+        am_db::repos::work_graph::reorder_siblings(&self.db.pool, project_id, parent_id, &node_ids)
+            .await?;
+        self.notify_plan_watchers(project_id);
+        Ok(())
+    }
+
+    async fn validate_work_parent(
+        &self,
+        project_id: &str,
+        node_id: Option<&str>,
+        parent_id: Option<&str>,
+    ) -> Result<(), CoreError> {
+        let Some(parent_id) = parent_id else {
+            return Ok(());
+        };
+        let mut ancestor_id = parent_id.to_string();
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            if Some(ancestor_id.as_str()) == node_id || !seen.insert(ancestor_id.clone()) {
+                return Err(CoreError::Other(
+                    "work node hierarchy cannot contain a cycle".into(),
+                ));
+            }
+            let ancestor = am_db::repos::work_graph::get_node(&self.db.pool, &ancestor_id)
+                .await?
+                .ok_or(CoreError::NotFound)?;
+            if ancestor.project_id != project_id {
+                return Err(CoreError::Other(
+                    "parent work node must be in the same project".into(),
+                ));
+            }
+            // Keep this traversal bounded even if an older database has malformed links.
+            if seen.len() >= 64 {
+                return Err(CoreError::Other(
+                    "work node nesting is limited to 64 levels".into(),
+                ));
+            }
+            match ancestor.parent_id {
+                Some(id) => ancestor_id = id,
+                None => break,
+            }
+        }
+        if let Some(node_id) = node_id {
+            let graph = am_db::repos::work_graph::graph(&self.db.pool, project_id).await?;
+            let mut frontier = vec![(node_id.to_string(), 0_usize)];
+            let mut visited = std::collections::HashSet::new();
+            while let Some((id, depth)) = frontier.pop() {
+                if !visited.insert(id.clone()) {
+                    return Err(CoreError::Other(
+                        "work node hierarchy cannot contain a cycle".into(),
+                    ));
+                }
+                if seen.len() + depth >= 64 {
+                    return Err(CoreError::Other(
+                        "work node nesting is limited to 64 levels".into(),
+                    ));
+                }
+                frontier.extend(
+                    graph
+                        .nodes
+                        .iter()
+                        .filter(|n| n.parent_id.as_deref() == Some(&id))
+                        .map(|n| (n.id.clone(), depth + 1)),
+                );
+            }
+        }
+        Ok(())
     }
 
     pub async fn connect_work_nodes(&self, input: NewWorkEdge) -> Result<WorkEdge, CoreError> {
@@ -695,12 +810,19 @@ impl AppCore {
         permission: PermissionPolicy,
         execution_backend: Option<ExecutionBackend>,
     ) -> Result<String, CoreError> {
+        let node = am_db::repos::work_graph::get_node(&self.db.pool, node_id)
+            .await?
+            .ok_or(CoreError::NotFound)?;
         self.run_work_node_with_model_options(
             node_id,
             agent,
             permission,
             execution_backend,
-            WorkRunModelOptions::default(),
+            WorkRunModelOptions {
+                model: node.workflow_model,
+                reasoning: node.workflow_reasoning,
+                ..Default::default()
+            },
         )
         .await
     }
@@ -789,6 +911,7 @@ impl AppCore {
         options: &WorkRunModelOptions,
     ) -> Result<(), CoreError> {
         if options.model.is_none()
+            && options.reasoning.is_none()
             && options.model_target.is_none()
             && options.max_compute_usd.is_none()
             && options.compute_profile.is_none()
@@ -814,6 +937,7 @@ impl AppCore {
         } else if let Some(thread_id) = &node.thread_id {
             let patch = am_proto::AgentThreadUpdate {
                 model: options.model.clone(),
+                reasoning: options.reasoning.clone(),
                 model_target: options.model_target,
                 local_base_url: options.compute_profile.clone(),
                 estimated_compute_cost_usd: options.max_compute_usd,
@@ -847,6 +971,59 @@ impl AppCore {
         .await
     }
 
+    pub async fn start_workflow(&self, root_node_id: &str) -> Result<WorkPlanRun, CoreError> {
+        let root = self
+            .get_work_node(root_node_id)
+            .await?
+            .ok_or(CoreError::NotFound)?;
+        let existing =
+            am_db::repos::work_graph::list_plan_runs(&self.db.pool, &root.project_id).await?;
+        let active_plans: Vec<_> = existing
+            .iter()
+            .filter(|plan| {
+                matches!(
+                    plan.state,
+                    WorkPlanRunState::Running | WorkPlanRunState::Paused
+                )
+            })
+            .collect();
+        if !active_plans.is_empty() {
+            let graph = am_db::repos::work_graph::graph(&self.db.pool, &root.project_id).await?;
+            let requested: HashSet<_> = workflow_scope(&graph, root_node_id)?
+                .nodes
+                .into_iter()
+                .map(|node| node.id)
+                .collect();
+            for plan in active_plans {
+                let overlaps = match plan.root_node_id.as_deref() {
+                    None => true,
+                    Some(other) => workflow_scope(&graph, other)?
+                        .nodes
+                        .iter()
+                        .any(|node| requested.contains(&node.id)),
+                };
+                if overlaps {
+                    return Err(CoreError::Other(
+                        "another active workflow includes one or more of these tasks".into(),
+                    ));
+                }
+            }
+        }
+        self.run_work_plan_with_options(
+            &root.project_id,
+            GateMode::Autonomous,
+            Some(1),
+            AgentKind::Codex,
+            PermissionPolicy::WorkspaceWrite,
+            None,
+            am_proto::WorkPlanOptions {
+                root_node_id: Some(root_node_id.into()),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn run_work_plan_with_options(
         &self,
@@ -860,6 +1037,21 @@ impl AppCore {
     ) -> Result<WorkPlanRun, CoreError> {
         let graph = am_db::repos::work_graph::graph(&self.db.pool, project_id).await?;
         validate_gating_edges_acyclic(&graph.nodes, &graph.edges)?;
+        let graph = if let Some(root) = options.root_node_id.as_deref() {
+            workflow_scope(&graph, root)?
+        } else {
+            graph
+        };
+        if options.root_node_id.is_some()
+            && graph
+                .nodes
+                .iter()
+                .any(|node| node.kind == WorkNodeKind::Milestone)
+        {
+            return Err(CoreError::Other(
+                "milestones cannot run inside an ordered workflow".into(),
+            ));
+        }
         let total_count = graph
             .nodes
             .iter()
@@ -874,6 +1066,11 @@ impl AppCore {
         let max_active_runs = max_active_runs
             .unwrap_or(effective_capacity)
             .clamp(1, effective_capacity);
+        let max_active_runs = if options.root_node_id.is_some() {
+            1
+        } else {
+            max_active_runs
+        };
         let evaluator_policy_json = self
             .get_evaluator_policy()
             .await
@@ -912,6 +1109,7 @@ impl AppCore {
         let project_id = project_id.to_string();
         let model_options = WorkRunModelOptions {
             model: options.model.clone(),
+            reasoning: None,
             model_target: options.model_target,
             compute_profile: options.compute_profile.clone(),
             max_compute_usd: options.max_compute_usd,
@@ -958,10 +1156,29 @@ impl AppCore {
             return Ok(plan);
         }
         let graph = am_db::repos::work_graph::graph(&self.db.pool, &plan.project_id).await?;
+        let graph = if let Some(root) = plan.root_node_id.as_deref() {
+            workflow_scope(&graph, root)?
+        } else {
+            graph
+        };
         if plan.gate_mode == GateMode::Manual && manual_gate_pending(&graph) {
             return Err(CoreError::Other(
                 "manual gate is still waiting for review".into(),
             ));
+        }
+        if let Some(root) = plan.root_node_id.as_deref() {
+            if let Some(node) = ordered_workflow_ready(&graph, root).first() {
+                if node.status == TaskStatus::Paused {
+                    self.update_work_node(
+                        &node.id,
+                        WorkNodeUpdate {
+                            status: Some(TaskStatus::Draft),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                }
+            }
         }
         let resumed = am_db::repos::work_graph::resume_plan_run(&self.db.pool, plan_run_id).await?;
         self.events
@@ -1136,7 +1353,15 @@ impl AppCore {
                 return;
             }
 
-            let graph = match am_db::repos::work_graph::graph(&self.db.pool, &project_id).await {
+            let graph = match am_db::repos::work_graph::graph(&self.db.pool, &project_id)
+                .await
+                .and_then(|graph| {
+                    if let Some(root) = plan.root_node_id.as_deref() {
+                        workflow_scope(&graph, root).map_err(|_| am_db::DbError::NotFound)
+                    } else {
+                        Ok(graph)
+                    }
+                }) {
                 Ok(graph) => graph,
                 Err(err) => {
                     self.finish_plan_run(
@@ -1201,7 +1426,13 @@ impl AppCore {
             // graph loaded above is still current.
             let graph = if gate_outcome == PlanGateOutcome::ContinueUpdated {
                 match am_db::repos::work_graph::graph(&self.db.pool, &project_id).await {
-                    Ok(fresh) => fresh,
+                    Ok(fresh) => {
+                        if let Some(root) = plan.root_node_id.as_deref() {
+                            workflow_scope(&fresh, root).unwrap_or(graph)
+                        } else {
+                            fresh
+                        }
+                    }
                     Err(_) => graph,
                 }
             } else {
@@ -1306,7 +1537,40 @@ impl AppCore {
             }
 
             let mut started = 0i64;
-            let ready_nodes = ready_runnable_nodes(&graph);
+            let ready_nodes = if let Some(root) = plan.root_node_id.as_deref() {
+                ordered_workflow_ready(&graph, root)
+            } else {
+                ready_runnable_nodes(&graph)
+            };
+            if plan.root_node_id.is_some() && active == 0 {
+                if let Some(node) = ready_nodes.first() {
+                    if node.status == TaskStatus::Paused
+                        && am_db::repos::work_graph::count_runs_for_node_in_plan(
+                            &self.db.pool,
+                            &plan_run_id,
+                            &node.id,
+                        )
+                        .await
+                        .unwrap_or(0)
+                            > 0
+                    {
+                        self.update_plan_run(
+                            &plan_run_id,
+                            WorkPlanRunState::Paused,
+                            completed,
+                            0,
+                            blocked,
+                            Some(format!(
+                                "{} was interrupted. Resume the workflow to retry it.",
+                                node.title
+                            )),
+                            false,
+                        )
+                        .await;
+                        return;
+                    }
+                }
+            }
             let ready_count = ready_nodes.len();
             let start_budget = (plan.max_active_runs - active).max(0);
             if start_budget > 0 {
@@ -1314,14 +1578,43 @@ impl AppCore {
                     if started >= start_budget {
                         break;
                     }
+                    if plan.root_node_id.is_some()
+                        && node.status == TaskStatus::Queued
+                        && am_db::repos::work_graph::count_runs_for_node_in_plan(
+                            &self.db.pool,
+                            &plan_run_id,
+                            &node.id,
+                        )
+                        .await
+                        .unwrap_or(0)
+                            > 0
+                    {
+                        // A provider fallback may briefly put an already-started
+                        // node back in queued state. Its own continuation owns it.
+                        continue;
+                    }
                     let agent = node.primary_agent.unwrap_or(default_agent);
+                    let node_permission = if plan.root_node_id.is_some() {
+                        parse_permission(&node.workflow_permission)
+                    } else {
+                        permission
+                    };
+                    let node_model = if plan.root_node_id.is_some() {
+                        WorkRunModelOptions {
+                            model: node.workflow_model.clone(),
+                            reasoning: node.workflow_reasoning.clone(),
+                            ..Default::default()
+                        }
+                    } else {
+                        model_options.clone()
+                    };
                     match self
                         .run_work_node_with_model_options(
                             &node.id,
                             agent,
-                            permission,
+                            node_permission,
                             execution_backend,
-                            model_options.clone(),
+                            node_model,
                         )
                         .await
                     {
@@ -2112,6 +2405,116 @@ fn ready_runnable_nodes(graph: &WorkGraph) -> Vec<&WorkNode> {
     nodes
 }
 
+fn workflow_scope(graph: &WorkGraph, root: &str) -> Result<WorkGraph, CoreError> {
+    if !graph.nodes.iter().any(|node| node.id == root) {
+        return Err(CoreError::NotFound);
+    }
+    let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
+    for node in &graph.nodes {
+        if let Some(parent) = node.parent_id.as_deref() {
+            children.entry(parent).or_default().push(&node.id);
+        }
+    }
+    let mut ids = HashSet::new();
+    let mut stack = vec![root.to_string()];
+    while let Some(id) = stack.pop() {
+        if !ids.insert(id.clone()) {
+            return Err(CoreError::Other(
+                "workflow hierarchy contains a cycle".into(),
+            ));
+        }
+        stack.extend(
+            children
+                .get(id.as_str())
+                .into_iter()
+                .flatten()
+                .map(|child| (*child).to_string()),
+        );
+    }
+    for edge in &graph.edges {
+        if let Some((prerequisite, dependent)) = gating_dependency(edge) {
+            if ids.contains(dependent) && !ids.contains(prerequisite) {
+                return Err(CoreError::Other(
+                    "this workflow depends on a task outside the selected group".into(),
+                ));
+            }
+        }
+    }
+    Ok(WorkGraph {
+        project_id: graph.project_id.clone(),
+        nodes: graph
+            .nodes
+            .iter()
+            .filter(|node| ids.contains(&node.id))
+            .cloned()
+            .collect(),
+        edges: graph
+            .edges
+            .iter()
+            .filter(|edge| ids.contains(&edge.source_id) && ids.contains(&edge.target_id))
+            .cloned()
+            .collect(),
+        repo_bindings: graph
+            .repo_bindings
+            .iter()
+            .filter(|binding| ids.contains(&binding.node_id))
+            .cloned()
+            .collect(),
+    })
+}
+
+fn ordered_workflow_ready<'a>(graph: &'a WorkGraph, root: &str) -> Vec<&'a WorkNode> {
+    let by_id: HashMap<&str, &WorkNode> = graph
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
+    let mut children: HashMap<&str, Vec<&WorkNode>> = HashMap::new();
+    for node in &graph.nodes {
+        if let Some(parent) = node.parent_id.as_deref() {
+            children.entry(parent).or_default().push(node);
+        }
+    }
+    for siblings in children.values_mut() {
+        siblings.sort_by(|a, b| {
+            a.sort_order
+                .cmp(&b.sort_order)
+                .then(a.created_at.cmp(&b.created_at))
+        });
+    }
+    let mut ordered = Vec::new();
+    let mut stack = vec![root.to_string()];
+    while let Some(id) = stack.pop() {
+        stack.extend(
+            children
+                .get(id.as_str())
+                .into_iter()
+                .flatten()
+                .rev()
+                .map(|node| node.id.clone()),
+        );
+        if let Some(node) = by_id.get(id.as_str()) {
+            if matches!(node.kind, WorkNodeKind::Task | WorkNodeKind::Session) {
+                ordered.push(node);
+            }
+        }
+    }
+    for node in ordered {
+        if is_success_status(node.status) {
+            continue;
+        }
+        if matches!(
+            node.status,
+            TaskStatus::Draft | TaskStatus::Queued | TaskStatus::Paused
+        ) && prerequisites_complete(&node.id, graph)
+        {
+            return vec![node];
+        }
+        return Vec::new();
+    }
+    Vec::new()
+}
+
 fn manual_gate_pending(graph: &WorkGraph) -> bool {
     graph.nodes.iter().any(|node| {
         node.kind != WorkNodeKind::Group
@@ -2338,6 +2741,486 @@ pub(crate) fn truncate(value: &str, max: usize) -> String {
 #[cfg(test)]
 mod context_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn overlapping_workflows_cannot_start_together() {
+        let core = crate::test_core().await;
+        let project = core
+            .create_project(am_proto::NewProject {
+                name: "Overlap".into(),
+                description: None,
+            })
+            .await
+            .unwrap();
+        let group = core
+            .create_work_node(NewWorkNode {
+                project_id: project.id.clone(),
+                kind: Some(WorkNodeKind::Group),
+                title: "Group".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let child = core
+            .create_work_node(NewWorkNode {
+                project_id: project.id.clone(),
+                parent_id: Some(group.id.clone()),
+                kind: Some(WorkNodeKind::Session),
+                title: "Child".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let options = am_proto::WorkPlanOptions {
+            root_node_id: Some(group.id),
+            ..Default::default()
+        };
+        let _plan = am_db::repos::work_graph::create_plan_run(
+            &core.db.pool,
+            &project.id,
+            GateMode::Autonomous,
+            1,
+            AgentKind::Codex,
+            "workspace_write",
+            None,
+            None,
+            1,
+            &options,
+        )
+        .await
+        .unwrap();
+        assert!(core.start_workflow(&child.id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn interrupted_workflow_pauses_instead_of_relaunching_or_advancing() {
+        let core = crate::test_core().await;
+        let project = core
+            .create_project(am_proto::NewProject {
+                name: "Pause".into(),
+                description: None,
+            })
+            .await
+            .unwrap();
+        let node = core
+            .create_work_node(NewWorkNode {
+                project_id: project.id.clone(),
+                kind: Some(WorkNodeKind::Session),
+                title: "First".into(),
+                primary_agent: Some(AgentKind::Codex),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let options = am_proto::WorkPlanOptions {
+            root_node_id: Some(node.id.clone()),
+            ..Default::default()
+        };
+        let plan = am_db::repos::work_graph::create_plan_run(
+            &core.db.pool,
+            &project.id,
+            GateMode::Autonomous,
+            1,
+            AgentKind::Codex,
+            "workspace_write",
+            None,
+            None,
+            1,
+            &options,
+        )
+        .await
+        .unwrap();
+        let run_ref = am_proto::new_id();
+        am_db::repos::work_graph::record_run(&core.db.pool, &node, AgentKind::Codex, &run_ref)
+            .await
+            .unwrap();
+        am_db::repos::work_graph::attach_run_to_plan(&core.db.pool, &run_ref, &plan.id)
+            .await
+            .unwrap();
+        core.update_work_node(
+            &node.id,
+            WorkNodeUpdate {
+                status: Some(TaskStatus::Paused),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        core.drive_work_plan(
+            plan.id.clone(),
+            project.id,
+            AgentKind::Codex,
+            PermissionPolicy::WorkspaceWrite,
+            None,
+            WorkRunModelOptions::default(),
+        )
+        .await;
+        let paused = core.get_work_plan_run(&plan.id).await.unwrap().unwrap();
+        assert_eq!(paused.state, WorkPlanRunState::Paused);
+        assert!(paused.error.unwrap_or_default().contains("interrupted"));
+        assert_eq!(
+            am_db::repos::work_graph::count_runs_for_node_in_plan(
+                &core.db.pool,
+                &plan.id,
+                &node.id
+            )
+            .await
+            .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_settings_roundtrip_and_validate() {
+        let core = crate::test_core().await;
+        let project = core
+            .create_project(am_proto::NewProject {
+                name: "Settings".into(),
+                description: None,
+            })
+            .await
+            .unwrap();
+        let node = core
+            .create_work_node(NewWorkNode {
+                project_id: project.id.clone(),
+                kind: Some(WorkNodeKind::Session),
+                title: "Build".into(),
+                description: Some("Implement it".into()),
+                primary_agent: Some(AgentKind::Codex),
+                model: Some("gpt-test".into()),
+                reasoning: Some("high".into()),
+                permission: Some("ask".into()),
+                limit_behavior: Some("wait".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(node.workflow_model.as_deref(), Some("gpt-test"));
+        assert_eq!(node.workflow_reasoning.as_deref(), Some("high"));
+        assert_eq!(node.workflow_permission, "ask");
+        assert_eq!(node.workflow_limit_behavior, "wait");
+        let thread = core
+            .get_agent_thread(node.thread_id.as_deref().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(thread.reasoning.as_deref(), Some("high"));
+        assert_eq!(thread.permission, "ask");
+        let updated = core
+            .update_work_node(
+                &node.id,
+                WorkNodeUpdate {
+                    description: Some("Revised".into()),
+                    workflow_model: Some(String::new()),
+                    workflow_reasoning: Some(String::new()),
+                    workflow_permission: Some("workspace_write".into()),
+                    workflow_limit_behavior: Some("switch".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.description.as_deref(), Some("Revised"));
+        assert!(updated.workflow_model.is_none());
+        assert!(updated.workflow_reasoning.is_none());
+        assert_eq!(updated.workflow_limit_behavior, "switch");
+        let thread = core
+            .get_agent_thread(node.thread_id.as_deref().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(thread.model.is_none());
+        assert!(thread.reasoning.is_none());
+        assert_eq!(thread.permission, "workspace_write");
+        assert!(core
+            .update_work_node(
+                &node.id,
+                WorkNodeUpdate {
+                    workflow_permission: Some("invalid".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .is_err());
+        core.update_work_node(
+            &node.id,
+            WorkNodeUpdate {
+                status: Some(TaskStatus::Done),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let plan = core.start_workflow(&node.id).await.unwrap();
+        assert_eq!(plan.root_node_id.as_deref(), Some(node.id.as_str()));
+        assert_eq!(plan.max_active_runs, 1);
+        assert!(core.start_workflow(&node.id).await.is_err());
+        let mut final_state = plan.state;
+        for _ in 0..30 {
+            final_state = core
+                .get_work_plan_run(&plan.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .state;
+            if final_state == WorkPlanRunState::Completed {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(final_state, WorkPlanRunState::Completed);
+    }
+
+    #[test]
+    fn ordered_workflow_runs_parent_then_nested_children_in_saved_order() {
+        let make = |id: &str, parent: Option<&str>, order: i64, kind: WorkNodeKind| WorkNode {
+            id: id.into(),
+            project_id: "p".into(),
+            parent_id: parent.map(str::to_string),
+            task_id: None,
+            thread_id: None,
+            kind,
+            title: id.into(),
+            description: None,
+            status: TaskStatus::Draft,
+            priority: Default::default(),
+            primary_agent: None,
+            workflow_model: None,
+            workflow_reasoning: None,
+            workflow_permission: "workspace_write".into(),
+            workflow_limit_behavior: "inherit".into(),
+            position_x: 0.0,
+            position_y: 0.0,
+            width: None,
+            height: None,
+            position_locked: false,
+            sort_order: order,
+            created_at: now(),
+            updated_at: now(),
+        };
+        let mut graph = WorkGraph {
+            project_id: "p".into(),
+            nodes: vec![
+                make("root", None, 0, WorkNodeKind::Group),
+                make("later", Some("root"), 2, WorkNodeKind::Session),
+                make("first", Some("root"), 1, WorkNodeKind::Session),
+                make("nested", Some("first"), 0, WorkNodeKind::Session),
+            ],
+            edges: vec![],
+            repo_bindings: vec![],
+        };
+        assert_eq!(ordered_workflow_ready(&graph, "root")[0].id, "first");
+        graph
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "first")
+            .unwrap()
+            .status = TaskStatus::Done;
+        assert_eq!(ordered_workflow_ready(&graph, "root")[0].id, "nested");
+        graph
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "nested")
+            .unwrap()
+            .status = TaskStatus::Done;
+        assert_eq!(ordered_workflow_ready(&graph, "root")[0].id, "later");
+        let scoped = workflow_scope(&graph, "first").unwrap();
+        assert_eq!(scoped.nodes.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn nested_work_nodes_reject_cycles_and_foreign_parents() {
+        let core = crate::test_core().await;
+        let project = core
+            .create_project(am_proto::NewProject {
+                name: "One".into(),
+                description: None,
+            })
+            .await
+            .unwrap();
+        let other = core
+            .create_project(am_proto::NewProject {
+                name: "Two".into(),
+                description: None,
+            })
+            .await
+            .unwrap();
+        let root = core
+            .create_work_node(NewWorkNode {
+                project_id: project.id.clone(),
+                kind: Some(WorkNodeKind::Group),
+                title: "root".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let child = core
+            .create_work_node(NewWorkNode {
+                project_id: project.id.clone(),
+                parent_id: Some(root.id.clone()),
+                kind: Some(WorkNodeKind::Group),
+                title: "child".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let grandchild = core
+            .create_work_node(NewWorkNode {
+                project_id: project.id.clone(),
+                parent_id: Some(child.id.clone()),
+                kind: Some(WorkNodeKind::Group),
+                title: "grandchild".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(core
+            .move_work_node(&root.id, Some(grandchild.id.clone()), 0.0, 0.0)
+            .await
+            .is_err());
+        assert!(core
+            .move_work_node(&root.id, Some(root.id.clone()), 0.0, 0.0)
+            .await
+            .is_err());
+        assert!(core
+            .update_work_node(
+                &child.id,
+                WorkNodeUpdate {
+                    parent_id: Some(grandchild.id.clone()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .is_err());
+        assert!(core
+            .create_work_node(NewWorkNode {
+                project_id: other.id.clone(),
+                parent_id: Some(root.id.clone()),
+                kind: Some(WorkNodeKind::Group),
+                title: "invalid".into(),
+                ..Default::default()
+            })
+            .await
+            .is_err());
+        assert!(core
+            .move_work_node(&child.id, Some("missing".into()), 0.0, 0.0)
+            .await
+            .is_err());
+        let moved = core
+            .move_work_node(&grandchild.id, Some(root.id.clone()), 4.0, 8.0)
+            .await
+            .unwrap();
+        assert_eq!(moved.parent_id.as_deref(), Some(root.id.as_str()));
+        assert_eq!(moved.position_x, 4.0);
+        let renamed = core
+            .update_work_node(
+                &child.id,
+                WorkNodeUpdate {
+                    title: Some("renamed".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(renamed.title, "renamed");
+        assert_eq!(
+            core.get_work_graph(&project.id)
+                .await
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|n| n.id == root.id)
+                .unwrap()
+                .parent_id,
+            None
+        );
+        assert_eq!(core.get_work_graph(&other.id).await.unwrap().nodes.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn sibling_reorder_is_atomic_and_children_survive_parent_deletion() {
+        let core = crate::test_core().await;
+        let project = core
+            .create_project(am_proto::NewProject {
+                name: "One".into(),
+                description: None,
+            })
+            .await
+            .unwrap();
+        let root = core
+            .create_work_node(NewWorkNode {
+                project_id: project.id.clone(),
+                kind: Some(WorkNodeKind::Group),
+                title: "root".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let first = core
+            .create_work_node(NewWorkNode {
+                project_id: project.id.clone(),
+                parent_id: Some(root.id.clone()),
+                kind: Some(WorkNodeKind::Group),
+                title: "first".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let second = core
+            .create_work_node(NewWorkNode {
+                project_id: project.id.clone(),
+                parent_id: Some(root.id.clone()),
+                kind: Some(WorkNodeKind::Group),
+                title: "second".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(core
+            .reorder_work_nodes(
+                &project.id,
+                Some(&root.id),
+                vec![first.id.clone(), first.id.clone()]
+            )
+            .await
+            .is_err());
+        assert!(core
+            .reorder_work_nodes(&project.id, None, vec![first.id.clone()])
+            .await
+            .is_err());
+        assert!(core
+            .reorder_work_nodes(&project.id, Some(&root.id), vec![first.id.clone()])
+            .await
+            .is_err());
+        core.reorder_work_nodes(
+            &project.id,
+            Some(&root.id),
+            vec![second.id.clone(), first.id.clone()],
+        )
+        .await
+        .unwrap();
+        let graph = core.get_work_graph(&project.id).await.unwrap();
+        let mut children: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter(|n| n.parent_id.as_deref() == Some(&root.id))
+            .collect();
+        children.sort_by_key(|n| n.sort_order);
+        assert_eq!(
+            children.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            vec![second.id.as_str(), first.id.as_str()]
+        );
+        core.delete_work_node(&root.id).await.unwrap();
+        let graph = core.get_work_graph(&project.id).await.unwrap();
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|n| n.id == first.id && n.parent_id.is_none()));
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|n| n.id == second.id && n.parent_id.is_none()));
+    }
 
     fn push_n(builder: &mut ContextPacketBuilder, source: &str, n: usize, score: f64) {
         let filler = "x".repeat(1_200);

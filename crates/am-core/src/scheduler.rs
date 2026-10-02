@@ -226,6 +226,9 @@ impl AppCore {
             SCHEDULER_BATCH_LIMIT,
         )
         .await?;
+        if tasks.is_empty() {
+            return Ok(());
+        }
 
         for task in tasks {
             self.try_scheduler_start(task, "scheduler.queued_continue")
@@ -266,24 +269,42 @@ impl AppCore {
             SCHEDULER_BATCH_LIMIT,
         )
         .await?;
+        if tasks.is_empty() {
+            return Ok(());
+        }
 
         let policy = self.get_limit_policy().await.unwrap_or_default();
-        let ready_account_agent = if policy.accounts.is_empty() {
-            None
+        let ready_accounts = if policy.accounts.is_empty() {
+            Vec::new()
         } else {
-            self.provider_account_statuses()
+            self.provider_account_statuses().await?
+        };
+        let ready_agents = if policy.accounts.is_empty() && policy.auto_switch {
+            Some(self.detect_agents().await?)
+        } else {
+            None
+        };
+
+        for mut task in tasks {
+            let behavior = am_db::repos::work_graph::get_node_for_task(&self.db.pool, &task.id)
                 .await?
-                .into_iter()
+                .map(|node| node.workflow_limit_behavior)
+                .unwrap_or_else(|| "inherit".into());
+            let may_switch = match behavior.as_str() {
+                "switch" => true,
+                "wait" => false,
+                _ => policy.auto_switch,
+            };
+            let ready_agent = ready_accounts
+                .iter()
                 .find(|status| {
                     status.account.enabled
                         && status.authenticated
                         && status.availability != AvailabilityState::Limited
+                        && (may_switch || Some(status.account.agent) == task.primary_agent)
                 })
-                .map(|status| status.account.agent)
-        };
-
-        for mut task in tasks {
-            if let Some(agent) = ready_account_agent {
+                .map(|status| status.account.agent);
+            if let Some(agent) = ready_agent {
                 if task.primary_agent != Some(agent) {
                     task = am_db::repos::task::update(
                         &self.db.pool,
@@ -297,9 +318,36 @@ impl AppCore {
                 }
                 self.try_scheduler_start(task, "scheduler.account_available_continue")
                     .await;
-            } else if policy.accounts.is_empty() && self.limit_wait_ready(&task).await? {
-                self.try_scheduler_start(task, "scheduler.limit_reset_continue")
-                    .await;
+            } else if policy.accounts.is_empty() {
+                if self.limit_wait_ready(&task).await? {
+                    self.try_scheduler_start(task, "scheduler.limit_reset_continue")
+                        .await;
+                } else if may_switch {
+                    let statuses = if let Some(statuses) = &ready_agents {
+                        statuses.clone()
+                    } else {
+                        self.detect_agents().await?
+                    };
+                    if let Some(current) = task.primary_agent {
+                        let mut fallback = crate::fallback::FallbackPolicy::from(&policy);
+                        fallback.auto_switch = true;
+                        if let crate::fallback::FallbackDecision::Switch { agent, .. } =
+                            fallback.decide(current, &statuses, None)
+                        {
+                            task = am_db::repos::task::update(
+                                &self.db.pool,
+                                &task.id,
+                                TaskUpdate {
+                                    primary_agent: Some(agent),
+                                    ..Default::default()
+                                },
+                            )
+                            .await?;
+                            self.try_scheduler_start(task, "scheduler.fallback_available_continue")
+                                .await;
+                        }
+                    }
+                }
             }
         }
 
@@ -342,10 +390,13 @@ impl AppCore {
             )
             .await;
 
-        match self
-            .run_task(&task.id, agent, PermissionPolicy::WorkspaceWrite)
+        let permission = am_db::repos::work_graph::get_node_for_task(&self.db.pool, &task.id)
             .await
-        {
+            .ok()
+            .flatten()
+            .map(|node| crate::agent_thread::parse_permission(&node.workflow_permission))
+            .unwrap_or(PermissionPolicy::WorkspaceWrite);
+        match self.run_task(&task.id, agent, permission).await {
             Ok(session_id) => {
                 let _ = self
                     .activity(
@@ -467,7 +518,12 @@ impl AppCore {
                 && status.availability != AvailabilityState::Limited
         };
         for thread in threads {
-            let account_agent = if policy.auto_switch {
+            let auto_switch = match self.workflow_limit_behavior(&thread.id).await.as_str() {
+                "switch" => true,
+                "wait" => false,
+                _ => policy.auto_switch,
+            };
+            let account_agent = if auto_switch {
                 account_statuses.iter().find(ready).map(|s| s.account.agent)
             } else {
                 // Without automatic switching a session resumes only when the
@@ -485,7 +541,11 @@ impl AppCore {
                 policy
                     .accounts
                     .is_empty()
-                    .then(|| thread_resume_agent(&thread, &policy, &statuses))
+                    .then(|| {
+                        let mut effective_policy = policy.clone();
+                        effective_policy.auto_switch = auto_switch;
+                        thread_resume_agent(&thread, &effective_policy, &statuses)
+                    })
                     .flatten()
             }) {
                 self.try_thread_scheduler_start(

@@ -13,7 +13,7 @@ export type TaskStatus =
   | 'failed'
   | 'cancelled';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
-export type PermissionPolicy = 'read_only' | 'workspace_write' | 'autonomous';
+export type PermissionPolicy = 'read_only' | 'workspace_write' | 'ask' | 'autonomous';
 export type ExecutionBackend = 'host' | 'docker_sandbox';
 export type AvailabilityState = 'unknown' | 'available' | 'limited';
 export type LocalModelProvider = 'ollama' | 'lm_studio';
@@ -601,6 +601,10 @@ export interface WorkNode {
   status: TaskStatus;
   priority: TaskPriority;
   primary_agent: AgentKind | null;
+  workflow_model: string | null;
+  workflow_reasoning: string | null;
+  workflow_permission: PermissionPolicy;
+  workflow_limit_behavior: 'inherit' | 'switch' | 'wait';
   position_x: number;
   position_y: number;
   sort_order: number;
@@ -616,6 +620,10 @@ export interface NewWorkNode {
   description?: string | null;
   priority?: TaskPriority;
   primary_agent?: AgentKind | null;
+  model?: string | null;
+  reasoning?: string | null;
+  permission?: PermissionPolicy | null;
+  limit_behavior?: 'inherit' | 'switch' | 'wait' | null;
   repo_ids?: string[];
   position_x?: number | null;
   position_y?: number | null;
@@ -628,6 +636,10 @@ export interface WorkNodeUpdate {
   status?: TaskStatus | null;
   priority?: TaskPriority | null;
   primary_agent?: AgentKind | null;
+  workflow_model?: string;
+  workflow_reasoning?: string;
+  workflow_permission?: PermissionPolicy;
+  workflow_limit_behavior?: 'inherit' | 'switch' | 'wait';
   position_x?: number | null;
   position_y?: number | null;
   sort_order?: number | null;
@@ -699,6 +711,16 @@ export interface WorkGraph {
   nodes: WorkNode[];
   edges: WorkEdge[];
   repo_bindings: WorkNodeRepoBinding[];
+}
+
+export interface WorkPlanRun {
+  id: string;
+  project_id: string;
+  root_node_id: string | null;
+  state: 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+  total_count: number;
+  completed_count: number;
+  error: string | null;
 }
 
 export interface WorkNodeDiff {

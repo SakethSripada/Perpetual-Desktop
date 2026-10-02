@@ -1972,7 +1972,10 @@ impl AppCore {
         )
         .await?;
 
-        match self.fallback_decision(current, reset_at).await? {
+        match self
+            .fallback_decision_for_thread(&thread_id, current, reset_at)
+            .await?
+        {
             crate::fallback::FallbackDecision::Switch { agent, switch_back } => {
                 if thread.original_agent.is_none() {
                     thread.original_agent = Some(current);
@@ -2022,7 +2025,9 @@ impl AppCore {
             }
             crate::fallback::FallbackDecision::Wait { reset_at } => {
                 let local_policy = self.get_local_model_policy().await.unwrap_or_default();
-                if thread.task_budget.is_unlimited() {
+                if thread.task_budget.is_unlimited()
+                    && self.workflow_limit_behavior(&thread_id).await != "wait"
+                {
                     if let Ok(Some(target)) = self.best_ready_local_target(&local_policy).await {
                         let queued_id = self
                             .queue_known_limited_message(
@@ -2149,6 +2154,11 @@ impl AppCore {
                 .await
                 .map(|p| p.auto_switch)
                 .unwrap_or(true);
+            let auto_switch = match self.workflow_limit_behavior(thread_id).await.as_str() {
+                "switch" => true,
+                "wait" => false,
+                _ => auto_switch,
+            };
             if auto_switch {
                 if let Ok(Some(next)) = self.next_ready_provider_account(current_account_id).await {
                     self.start_thread_account_fallback(thread_id, current, next)
@@ -2191,7 +2201,10 @@ impl AppCore {
             }
             return;
         }
-        let Ok(decision) = self.fallback_decision(current, reset_at).await else {
+        let Ok(decision) = self
+            .fallback_decision_for_thread(thread_id, current, reset_at)
+            .await
+        else {
             return;
         };
         match decision {
@@ -2259,10 +2272,12 @@ impl AppCore {
             }
             crate::fallback::FallbackDecision::Wait { reset_at } => {
                 let local_policy = self.get_local_model_policy().await.unwrap_or_default();
-                if let Ok(Some(target)) = self.best_ready_local_target(&local_policy).await {
-                    self.start_thread_local_fallback(thread_id, current, target, &local_policy)
-                        .await;
-                    return;
+                if self.workflow_limit_behavior(thread_id).await != "wait" {
+                    if let Ok(Some(target)) = self.best_ready_local_target(&local_policy).await {
+                        self.start_thread_local_fallback(thread_id, current, target, &local_policy)
+                            .await;
+                        return;
+                    }
                 }
                 if let Ok(Some(mut thread)) =
                     am_db::repos::agent_thread::get(&self.db.pool, thread_id).await
@@ -3028,7 +3043,7 @@ pub(crate) fn parse_permission(value: &str) -> PermissionPolicy {
 /// the CLI default" and is always compatible. Mirrors the frontend's
 /// `modelCompatibleWithAgent` so an auto-switch doesn't carry over an
 /// incompatible model id (e.g. a `gpt-*` model onto Claude).
-fn model_compatible_with_agent(agent: AgentKind, model: &str) -> bool {
+pub(crate) fn model_compatible_with_agent(agent: AgentKind, model: &str) -> bool {
     let model = model.trim().to_lowercase();
     if model.is_empty() {
         return true;
