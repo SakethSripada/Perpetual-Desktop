@@ -268,16 +268,6 @@ pub async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonRespon
                 .await
                 .map_err(s)?,
         ),
-        Q::ReorderWorkNodes {
-            project_id,
-            parent_id,
-            node_ids,
-        } => {
-            core.reorder_work_nodes(&project_id, parent_id.as_deref(), node_ids)
-                .await
-                .map_err(s)?;
-            A::Unit
-        }
         Q::ConnectWorkNodes(input) => A::WorkEdge(core.connect_work_nodes(input).await.map_err(s)?),
         Q::DisconnectWorkNodes { edge_id } => {
             core.disconnect_work_nodes(&edge_id).await.map_err(s)?;
@@ -298,18 +288,6 @@ pub async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonRespon
                 .await
                 .map_err(s)?,
         ),
-        Q::StartWorkflow { root_node_id } => {
-            A::WorkPlanRun(core.start_workflow(&root_node_id).await.map_err(s)?)
-        }
-        Q::ListWorkPlanRuns { project_id } => {
-            A::WorkPlanRuns(core.list_work_plan_runs(&project_id).await.map_err(s)?)
-        }
-        Q::StopWorkPlan { plan_run_id } => {
-            A::WorkPlanRun(core.stop_work_plan(&plan_run_id).await.map_err(s)?)
-        }
-        Q::ResumeWorkPlan { plan_run_id } => {
-            A::WorkPlanRun(core.resume_work_plan(&plan_run_id).await.map_err(s)?)
-        }
         Q::StopWorkNode { node_id } => {
             core.stop_work_node(&node_id).await.map_err(s)?;
             A::Unit

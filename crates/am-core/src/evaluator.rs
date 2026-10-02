@@ -465,7 +465,6 @@ mod tests {
         WorkPlanRun {
             id: "plan".into(),
             project_id: "project".into(),
-            root_node_id: None,
             gate_mode: GateMode::AutoEvaluate,
             state: WorkPlanRunState::Running,
             max_active_runs: 4,
@@ -502,10 +501,6 @@ mod tests {
             status: am_proto::TaskStatus::Review,
             priority: TaskPriority::Medium,
             primary_agent: None,
-            workflow_model: None,
-            workflow_reasoning: None,
-            workflow_permission: "workspace_write".into(),
-            workflow_limit_behavior: "inherit".into(),
             position_x: 0.0,
             position_y: 0.0,
             width: None,

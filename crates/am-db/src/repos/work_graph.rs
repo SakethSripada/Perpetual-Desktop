@@ -68,10 +68,6 @@ struct WorkNodeRow {
     status: String,
     priority: String,
     primary_agent: Option<String>,
-    workflow_model: Option<String>,
-    workflow_reasoning: Option<String>,
-    workflow_permission: String,
-    workflow_limit_behavior: String,
     position_x: f64,
     position_y: f64,
     width: Option<f64>,
@@ -105,10 +101,6 @@ impl TryFrom<WorkNodeRow> for WorkNode {
             priority: TaskPriority::parse(&row.priority)
                 .ok_or_else(|| DbError::InvalidEnum(row.priority.clone()))?,
             primary_agent,
-            workflow_model: row.workflow_model,
-            workflow_reasoning: row.workflow_reasoning,
-            workflow_permission: row.workflow_permission,
-            workflow_limit_behavior: row.workflow_limit_behavior,
             position_x: row.position_x,
             position_y: row.position_y,
             width: row.width,
@@ -215,7 +207,6 @@ impl TryFrom<WorkRunRow> for WorkRun {
 struct WorkPlanRunRow {
     id: String,
     project_id: String,
-    root_node_id: Option<String>,
     gate_mode: String,
     state: String,
     max_active_runs: i64,
@@ -261,7 +252,6 @@ impl TryFrom<WorkPlanRunRow> for WorkPlanRun {
         Ok(Self {
             id: row.id,
             project_id: row.project_id,
-            root_node_id: row.root_node_id,
             gate_mode: GateMode::parse(&row.gate_mode)
                 .ok_or_else(|| DbError::InvalidEnum(row.gate_mode.clone()))?,
             state: WorkPlanRunState::parse(&row.state)
@@ -327,14 +317,13 @@ impl TryFrom<WorkGateEvaluationRow> for WorkGateEvaluation {
 }
 
 const NODE_SELECT: &str = "SELECT id, project_id, parent_id, task_id, thread_id, kind, title, \
-    description, status, priority, primary_agent, workflow_model, workflow_reasoning, \
-    workflow_permission, workflow_limit_behavior, position_x, position_y, width, height, \
+    description, status, priority, primary_agent, position_x, position_y, width, height, \
     position_locked, sort_order, created_at, updated_at FROM work_nodes";
 
 const EDGE_SELECT: &str = "SELECT id, project_id, source_id, target_id, kind, label, \
     created_at, updated_at FROM work_edges";
 
-const PLAN_SELECT: &str = "SELECT id, project_id, root_node_id, gate_mode, state, max_active_runs, \
+const PLAN_SELECT: &str = "SELECT id, project_id, gate_mode, state, max_active_runs, \
     failure_mode, max_node_retries, steer_dependents_on_unblock, \
     default_agent, default_permission, default_execution_backend, evaluator_policy_json, \
     resume_after_node_id, policy_envelope_id, total_count, completed_count, active_count, blocked_count, error, \
@@ -407,9 +396,8 @@ pub async fn create_standalone_node(
     .await?;
     sqlx::query(
         "INSERT INTO work_nodes (id, project_id, parent_id, task_id, thread_id, kind, title, \
-         description, status, priority, primary_agent, workflow_model, workflow_reasoning, \
-         workflow_permission, workflow_limit_behavior, position_x, position_y, sort_order, \
-         created_at, updated_at) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         description, status, priority, primary_agent, position_x, position_y, sort_order, \
+         created_at, updated_at) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&input.project_id)
@@ -420,10 +408,6 @@ pub async fn create_standalone_node(
     .bind(TaskStatus::Draft.as_str())
     .bind(input.priority.as_str())
     .bind(input.primary_agent.map(|agent| agent.as_str()))
-    .bind(&input.model)
-    .bind(&input.reasoning)
-    .bind(input.permission.as_deref().unwrap_or("workspace_write"))
-    .bind(input.limit_behavior.as_deref().unwrap_or("inherit"))
     .bind(input.position_x.unwrap_or(0.0))
     .bind(input.position_y.unwrap_or(0.0))
     .bind(sort_order)
@@ -458,18 +442,6 @@ pub async fn update_node_fields(
     if patch.primary_agent.is_some() {
         node.primary_agent = patch.primary_agent;
     }
-    if let Some(model) = patch.workflow_model {
-        node.workflow_model = (!model.is_empty()).then_some(model);
-    }
-    if let Some(reasoning) = patch.workflow_reasoning {
-        node.workflow_reasoning = (!reasoning.is_empty()).then_some(reasoning);
-    }
-    if let Some(permission) = patch.workflow_permission {
-        node.workflow_permission = permission;
-    }
-    if let Some(behavior) = patch.workflow_limit_behavior {
-        node.workflow_limit_behavior = behavior;
-    }
     if let Some(position_x) = patch.position_x {
         node.position_x = position_x;
     }
@@ -482,8 +454,7 @@ pub async fn update_node_fields(
     node.updated_at = now();
     sqlx::query(
         "UPDATE work_nodes SET parent_id = ?, title = ?, description = ?, status = ?, \
-         priority = ?, primary_agent = ?, workflow_model = ?, workflow_reasoning = ?, \
-         workflow_permission = ?, workflow_limit_behavior = ?, position_x = ?, position_y = ?, sort_order = ?, \
+         priority = ?, primary_agent = ?, position_x = ?, position_y = ?, sort_order = ?, \
          updated_at = ? WHERE id = ?",
     )
     .bind(&node.parent_id)
@@ -492,10 +463,6 @@ pub async fn update_node_fields(
     .bind(node.status.as_str())
     .bind(node.priority.as_str())
     .bind(node.primary_agent.map(|agent| agent.as_str()))
-    .bind(&node.workflow_model)
-    .bind(&node.workflow_reasoning)
-    .bind(&node.workflow_permission)
-    .bind(&node.workflow_limit_behavior)
     .bind(node.position_x)
     .bind(node.position_y)
     .bind(node.sort_order)
@@ -528,37 +495,6 @@ pub async fn move_node(
     .execute(pool)
     .await?;
     get_node(pool, id).await?.ok_or(DbError::NotFound)
-}
-
-/// Replace the order of one sibling list as a single transaction.
-pub async fn reorder_siblings(
-    pool: &SqlitePool,
-    project_id: &str,
-    parent_id: Option<&str>,
-    node_ids: &[String],
-) -> Result<(), DbError> {
-    let mut tx = pool.begin().await?;
-    let existing: Vec<String> =
-        sqlx::query_scalar("SELECT id FROM work_nodes WHERE project_id = ? AND parent_id IS ?")
-            .bind(project_id)
-            .bind(parent_id)
-            .fetch_all(&mut *tx)
-            .await?;
-    let expected: std::collections::HashSet<_> = existing.iter().collect();
-    let supplied: std::collections::HashSet<_> = node_ids.iter().collect();
-    if expected != supplied || existing.len() != node_ids.len() {
-        return Err(DbError::NotFound);
-    }
-    for (index, id) in node_ids.iter().enumerate() {
-        sqlx::query("UPDATE work_nodes SET sort_order = ?, updated_at = ? WHERE id = ?")
-            .bind(index as i64)
-            .bind(now())
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    tx.commit().await?;
-    Ok(())
 }
 
 pub async fn delete_node(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
@@ -732,8 +668,7 @@ pub async fn completed_gating_predecessors(
 ) -> Result<Vec<WorkNode>, DbError> {
     let rows = sqlx::query_as::<_, WorkNodeRow>(
         "SELECT n.id, n.project_id, n.parent_id, n.task_id, n.thread_id, n.kind, n.title, \
-         n.description, n.status, n.priority, n.primary_agent, n.workflow_model, n.workflow_reasoning, \
-         n.workflow_permission, n.workflow_limit_behavior, n.position_x, n.position_y, \
+         n.description, n.status, n.priority, n.primary_agent, n.position_x, n.position_y, \
          n.width, n.height, n.position_locked, n.sort_order, n.created_at, n.updated_at \
          FROM work_edges e \
          JOIN work_nodes n ON \
@@ -962,16 +897,15 @@ pub async fn create_plan_run(
     let ts = now();
     let id = new_id();
     sqlx::query(
-        "INSERT INTO work_plan_runs (id, project_id, root_node_id, gate_mode, state, max_active_runs, \
+        "INSERT INTO work_plan_runs (id, project_id, gate_mode, state, max_active_runs, \
          failure_mode, max_node_retries, steer_dependents_on_unblock, \
          default_agent, default_permission, default_execution_backend, evaluator_policy_json, \
          resume_after_node_id, total_count, completed_count, active_count, blocked_count, error, \
          started_at, ended_at, updated_at) \
-         VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, 0, 0, NULL, ?, NULL, ?)",
+         VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, 0, 0, NULL, ?, NULL, ?)",
     )
     .bind(&id)
     .bind(project_id)
-    .bind(&options.root_node_id)
     .bind(gate_mode.as_str())
     .bind(max_active_runs)
     .bind(options.failure_mode.as_str())
@@ -1009,8 +943,7 @@ pub async fn count_runs_for_node_in_plan(
 pub async fn gating_dependents(pool: &SqlitePool, node_id: &str) -> Result<Vec<WorkNode>, DbError> {
     let rows = sqlx::query_as::<_, WorkNodeRow>(
         "SELECT n.id, n.project_id, n.parent_id, n.task_id, n.thread_id, n.kind, n.title, \
-         n.description, n.status, n.priority, n.primary_agent, n.workflow_model, n.workflow_reasoning, \
-         n.workflow_permission, n.workflow_limit_behavior, n.position_x, n.position_y, \
+         n.description, n.status, n.priority, n.primary_agent, n.position_x, n.position_y, \
          n.width, n.height, n.position_locked, n.sort_order, n.created_at, n.updated_at \
          FROM work_edges e \
          JOIN work_nodes n ON \

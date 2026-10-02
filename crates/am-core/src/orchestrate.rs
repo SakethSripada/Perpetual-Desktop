@@ -227,8 +227,6 @@ impl AppCore {
         let task = am_db::repos::task::get(&self.db.pool, task_id)
             .await?
             .ok_or(CoreError::NotFound)?;
-        let workflow_node =
-            am_db::repos::work_graph::get_node_for_task(&self.db.pool, task_id).await?;
         self.sync_session_capacity().await;
         let permit = match self.sessions.try_acquire(Some(&task.project_id)) {
             Ok(permit) => permit,
@@ -245,26 +243,16 @@ impl AppCore {
             .task_execution_backend(&task, execution_backend)
             .await?;
         let model_target = normalize_model_target(task.model_target, None);
-        let workflow_model = workflow_node
-            .as_ref()
-            .and_then(|node| node.workflow_model.clone())
-            .filter(|model| crate::agent_thread::model_compatible_with_agent(agent, model));
-        let task_model = task
-            .model
-            .clone()
-            .filter(|model| crate::agent_thread::model_compatible_with_agent(agent, model));
         let policy = self
             .policy_preflight(PolicyPreflightInput {
                 agent,
-                model: workflow_model.clone().or_else(|| task_model.clone()),
+                model: task.model.clone(),
                 runtime: requested_backend,
             })
             .await?;
         let agent = policy.agent;
         let backend = policy.runtime;
-        let model = workflow_model
-            .or_else(|| policy.model.clone())
-            .or(task_model);
+        let model = policy.model.clone().or_else(|| task.model.clone());
 
         let adapter = self.agents.get(agent).ok_or_else(|| {
             CoreError::Other(format!("no adapter available for {}", agent.label()))
@@ -416,15 +404,7 @@ impl AppCore {
                 (None, false) => build_prompt(&task),
             },
             model,
-            reasoning: workflow_node.and_then(|node| {
-                node.workflow_model
-                    .as_deref()
-                    .map_or(true, |model| {
-                        crate::agent_thread::model_compatible_with_agent(agent, model)
-                    })
-                    .then_some(node.workflow_reasoning)
-                    .flatten()
-            }),
+            reasoning: None,
             local_model,
             permission,
             runtime,
@@ -832,22 +812,11 @@ impl AppCore {
                 return;
             }
             if self.provider_accounts_configured().await {
-                let default_auto_switch = self
+                let auto_switch = self
                     .get_limit_policy()
                     .await
                     .map(|p| p.auto_switch)
                     .unwrap_or(true);
-                let behavior = am_db::repos::work_graph::get_node_for_task(&self.db.pool, &task_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|node| node.workflow_limit_behavior)
-                    .unwrap_or_else(|| "inherit".into());
-                let auto_switch = match behavior.as_str() {
-                    "switch" => true,
-                    "wait" => false,
-                    _ => default_auto_switch,
-                };
                 let next = if auto_switch {
                     self.next_ready_provider_account(provider_account_id.as_deref())
                         .await

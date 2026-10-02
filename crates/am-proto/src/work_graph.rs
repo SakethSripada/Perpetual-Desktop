@@ -168,14 +168,6 @@ pub struct WorkNode {
     pub status: TaskStatus,
     pub priority: TaskPriority,
     pub primary_agent: Option<AgentKind>,
-    #[serde(default)]
-    pub workflow_model: Option<String>,
-    #[serde(default)]
-    pub workflow_reasoning: Option<String>,
-    #[serde(default = "default_workflow_permission")]
-    pub workflow_permission: String,
-    #[serde(default = "default_workflow_limit_behavior")]
-    pub workflow_limit_behavior: String,
     pub position_x: f64,
     pub position_y: f64,
     /// Layout-engine footprint. Groups are sized from their children; `None`
@@ -209,12 +201,6 @@ pub struct NewWorkNode {
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
-    pub reasoning: Option<String>,
-    #[serde(default)]
-    pub permission: Option<String>,
-    #[serde(default)]
-    pub limit_behavior: Option<String>,
-    #[serde(default)]
     pub model_target: Option<ModelTargetKind>,
     #[serde(default)]
     pub compute_profile: Option<String>,
@@ -247,26 +233,11 @@ pub struct WorkNodeUpdate {
     #[serde(default)]
     pub primary_agent: Option<AgentKind>,
     #[serde(default)]
-    pub workflow_model: Option<String>,
-    #[serde(default)]
-    pub workflow_reasoning: Option<String>,
-    #[serde(default)]
-    pub workflow_permission: Option<String>,
-    #[serde(default)]
-    pub workflow_limit_behavior: Option<String>,
-    #[serde(default)]
     pub position_x: Option<f64>,
     #[serde(default)]
     pub position_y: Option<f64>,
     #[serde(default)]
     pub sort_order: Option<i64>,
-}
-
-fn default_workflow_permission() -> String {
-    "workspace_write".into()
-}
-fn default_workflow_limit_behavior() -> String {
-    "inherit".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -364,8 +335,6 @@ impl PlanFailureMode {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkPlanOptions {
     #[serde(default)]
-    pub root_node_id: Option<String>,
-    #[serde(default)]
     pub failure_mode: PlanFailureMode,
     #[serde(default)]
     pub max_node_retries: i64,
@@ -387,8 +356,6 @@ pub struct WorkPlanOptions {
 pub struct WorkPlanRun {
     pub id: String,
     pub project_id: String,
-    #[serde(default)]
-    pub root_node_id: Option<String>,
     pub gate_mode: GateMode,
     pub state: WorkPlanRunState,
     pub max_active_runs: i64,

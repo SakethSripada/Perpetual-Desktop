@@ -112,11 +112,6 @@ pub enum DaemonRequest {
         position_x: f64,
         position_y: f64,
     },
-    ReorderWorkNodes {
-        project_id: String,
-        parent_id: Option<String>,
-        node_ids: Vec<String>,
-    },
     ConnectWorkNodes(NewWorkEdge),
     DisconnectWorkNodes {
         edge_id: String,
@@ -130,18 +125,6 @@ pub enum DaemonRequest {
         agent: AgentKind,
         permission: PermissionPolicy,
         execution_backend: Option<ExecutionBackend>,
-    },
-    StartWorkflow {
-        root_node_id: String,
-    },
-    ListWorkPlanRuns {
-        project_id: String,
-    },
-    StopWorkPlan {
-        plan_run_id: String,
-    },
-    ResumeWorkPlan {
-        plan_run_id: String,
     },
     StopWorkNode {
         node_id: String,
@@ -447,8 +430,6 @@ pub enum DaemonResponse {
     Tasks(Vec<Task>),
     WorkGraph(WorkGraph),
     WorkNode(WorkNode),
-    WorkPlanRun(am_proto::WorkPlanRun),
-    WorkPlanRuns(Vec<am_proto::WorkPlanRun>),
     WorkEdge(WorkEdge),
     WorkNodeRepoBindings(Vec<WorkNodeRepoBinding>),
     ContextPacket(ContextPacket),
@@ -639,24 +620,6 @@ mod tests {
         let back = roundtrip(&req);
         assert_eq!(back.id, 42);
         assert!(matches!(back.request, DaemonRequest::Search { .. }));
-    }
-
-    #[test]
-    fn reorder_work_nodes_uses_rpc_shape() {
-        let request = DaemonRequest::ReorderWorkNodes {
-            project_id: "project".into(),
-            parent_id: Some("parent".into()),
-            node_ids: vec!["b".into(), "a".into()],
-        };
-        let value = serde_json::to_value(&request).unwrap();
-        assert_eq!(
-            value["reorder_work_nodes"]["node_ids"],
-            serde_json::json!(["b", "a"])
-        );
-        assert!(matches!(
-            serde_json::from_value::<DaemonRequest>(value).unwrap(),
-            DaemonRequest::ReorderWorkNodes { .. }
-        ));
     }
 
     #[test]

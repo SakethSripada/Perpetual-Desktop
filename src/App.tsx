@@ -13,7 +13,6 @@ import {
   UsersRound,
   FolderGit2,
   History,
-  Workflow,
 } from 'lucide-react';
 import { native, action } from './lib/api';
 import { useStore } from './lib/store';
@@ -27,15 +26,13 @@ import { Accounts } from './components/Accounts';
 import { Settings } from './components/Settings';
 import { Projects } from './components/Projects';
 import { Activity } from './components/Activity';
-import { Workflows } from './components/Workflows';
 
-export type Page = 'chat' | 'projects' | 'workflows' | 'accounts' | 'activity' | 'settings';
+export type Page = 'chat' | 'projects' | 'accounts' | 'activity' | 'settings';
 export type Theme = 'dark' | 'light' | 'system';
 
 const PAGE_TITLES: Record<Page, string> = {
   chat: 'New task',
   projects: 'Projects',
-  workflows: 'Workflows',
   accounts: 'Accounts',
   activity: 'Activity',
   settings: 'Settings',
@@ -136,7 +133,6 @@ export default function App() {
 
   const nav = [
     ['projects', FolderGit2, 'Projects'],
-    ['workflows', Workflow, 'Workflows'],
     ['activity', History, 'Activity'],
     ['accounts', UsersRound, 'Accounts'],
   ] as const;
@@ -284,7 +280,6 @@ export default function App() {
               {page === 'settings' && <Settings theme={theme} setTheme={setTheme} />}
               {page === 'projects' && <Projects />}
               {page === 'activity' && <Activity onSelect={selectThread} />}
-              {page === 'workflows' && <Workflows onSelect={selectThread} />}
             </div>
           </div>
         )}

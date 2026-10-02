@@ -21,8 +21,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use am_agents::PermissionPolicy;
 use am_core::AppCore;
 use am_proto::{
-    AgentKind, AppEvent, ApprovalDecision, NewLocalRepo, NewProject, NewTask, NewWorkNode,
-    TaskPriority, TaskStatus, WorkNodeKind, WorkPlanRunState,
+    AgentKind, AppEvent, ApprovalDecision, NewLocalRepo, NewProject, NewTask, TaskPriority,
+    TaskStatus,
 };
 use tokio::sync::broadcast::Receiver;
 
@@ -239,94 +239,6 @@ async fn run_live_approval(agent: AgentKind, permission: PermissionPolicy, expec
     }
 
     eprintln!("OK {} {permission:?}", agent.label());
-    let _ = std::fs::remove_dir_all(&repo_path);
-}
-
-#[tokio::test]
-#[ignore = "requires an authenticated Codex CLI; run with --ignored"]
-async fn ordered_workflow_runs_each_real_session_to_completion() {
-    let core = AppCore::new(&tmp("am-live-workflow-data")).await.unwrap();
-    if !core
-        .detect_agents()
-        .await
-        .unwrap()
-        .iter()
-        .any(|status| status.kind == AgentKind::Codex && status.installed && status.authenticated)
-    {
-        eprintln!("SKIP: Codex is not ready");
-        return;
-    }
-    let repo_path = dummy_repo();
-    let project = core
-        .create_project(NewProject {
-            name: "Ordered workflow".into(),
-            description: None,
-        })
-        .await
-        .unwrap();
-    let repo = core
-        .connect_local_repo(NewLocalRepo {
-            project_id: project.id.clone(),
-            path: repo_path.to_string_lossy().to_string(),
-            initialize: false,
-        })
-        .await
-        .unwrap();
-    let group = core
-        .create_work_node(NewWorkNode {
-            project_id: project.id.clone(),
-            kind: Some(WorkNodeKind::Group),
-            title: "Sequence".into(),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    let make = |title: &str| {
-        NewWorkNode {
-        project_id: project.id.clone(), parent_id: Some(group.id.clone()),
-        kind: Some(WorkNodeKind::Session), title: title.into(),
-        description: Some(format!("Run exactly `git --version` using a shell tool and report the result. This is {title}.")),
-        primary_agent: Some(AgentKind::Codex), repo_ids: vec![repo.id.clone()],
-        ..Default::default()
-    }
-    };
-    let first = core.create_work_node(make("First")).await.unwrap();
-    let second = core.create_work_node(make("Second")).await.unwrap();
-    let plan = core.start_workflow(&group.id).await.unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
-    let mut first_done_before_second = false;
-    let state = loop {
-        let graph = core.get_work_graph(&project.id).await.unwrap();
-        let first_state = graph
-            .nodes
-            .iter()
-            .find(|node| node.id == first.id)
-            .unwrap()
-            .status;
-        let second_state = graph
-            .nodes
-            .iter()
-            .find(|node| node.id == second.id)
-            .unwrap()
-            .status;
-        if first_state == TaskStatus::Done && second_state != TaskStatus::Done {
-            first_done_before_second = true;
-        }
-        let run = core.get_work_plan_run(&plan.id).await.unwrap().unwrap();
-        if run.state != WorkPlanRunState::Running {
-            break run.state;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "workflow timed out; statuses: {first_state:?}, {second_state:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    };
-    assert_eq!(state, WorkPlanRunState::Completed);
-    assert!(
-        first_done_before_second,
-        "the first task must finish before the second"
-    );
     let _ = std::fs::remove_dir_all(&repo_path);
 }
 
