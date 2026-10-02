@@ -656,134 +656,126 @@ export function Composer({
         <div className="grid gap-4 text-[13px]">
           <label className="grid gap-1.5">
             Budget type
-            <div className="flex items-center gap-2">
-              <Select
-                aria-label="Budget type"
-                className="flex-1"
-                value={budget.mode}
-                disabled={running}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  if (next === 'unlimited') {
-                    setBudget({ mode: 'unlimited' });
-                    setBudgetAmount('');
-                  } else if (next === 'tokens') {
-                    const amount = Math.max(
-                      200000,
-                      budgetStarted && thread?.task_budget.mode === 'tokens'
-                        ? thread.task_budget.limit_tokens
-                        : 0,
-                    );
-                    setBudget({ mode: 'tokens', limit_tokens: amount });
-                    setBudgetAmount(String(amount));
-                  } else {
-                    const amount = Math.max(
-                      5,
-                      budgetStarted && thread?.task_budget.mode === 'weekly_percent'
-                        ? thread.task_budget.limit_percent
-                        : 0,
-                    );
-                    setBudget({ mode: 'weekly_percent', limit_percent: amount });
-                    setBudgetAmount(String(amount));
-                  }
-                }}
+            <Select
+              aria-label="Budget type"
+              className="flex-1"
+              value={budget.mode}
+              disabled={running}
+              onChange={(e) => {
+                const next = e.target.value;
+                if (next === 'unlimited') {
+                  setBudget({ mode: 'unlimited' });
+                  setBudgetAmount('');
+                } else if (next === 'tokens') {
+                  const amount = Math.max(
+                    200000,
+                    budgetStarted && thread?.task_budget.mode === 'tokens'
+                      ? thread.task_budget.limit_tokens
+                      : 0,
+                  );
+                  setBudget({ mode: 'tokens', limit_tokens: amount });
+                  setBudgetAmount(String(amount));
+                } else {
+                  const amount = Math.max(
+                    5,
+                    budgetStarted && thread?.task_budget.mode === 'weekly_percent'
+                      ? thread.task_budget.limit_percent
+                      : 0,
+                  );
+                  setBudget({ mode: 'weekly_percent', limit_percent: amount });
+                  setBudgetAmount(String(amount));
+                }
+              }}
+            >
+              <option value="unlimited">No budget</option>
+              <option
+                value="tokens"
+                disabled={budgetStarted && thread?.task_budget.mode !== 'tokens'}
               >
-                <option value="unlimited">No budget</option>
-                <option
-                  value="tokens"
-                  disabled={budgetStarted && thread?.task_budget.mode !== 'tokens'}
-                >
-                  Total tokens
-                </option>
-                <option
-                  value="weekly_percent"
-                  disabled={
-                    agent !== 'codex' ||
-                    (budgetStarted && thread?.task_budget.mode !== 'weekly_percent')
-                  }
-                >
-                  Weekly usage percentage{agent !== 'codex' ? ' (Codex only)' : ''}
-                </option>
-              </Select>
-              {budget.mode !== 'unlimited' && (
-                <div className="flex items-center gap-1 rounded-lg border border-line px-2">
-                  <input
-                    aria-label={budget.mode === 'tokens' ? 'Token limit' : 'Weekly usage limit'}
-                    type="number"
-                    inputMode="numeric"
-                    className="!w-24 border-0 bg-transparent text-right tabular-nums outline-none"
-                    min={
-                      budget.mode === 'tokens'
-                        ? Math.max(
-                            10000,
-                            budgetStarted && thread?.task_budget.mode === 'tokens'
-                              ? thread.task_budget.limit_tokens
-                              : 10000,
-                          )
-                        : Math.max(
-                            1,
-                            budgetStarted && thread?.task_budget.mode === 'weekly_percent'
-                              ? thread.task_budget.limit_percent
-                              : 1,
-                          )
-                    }
-                    max={budget.mode === 'tokens' ? 10000000 : 100}
-                    step={1}
-                    disabled={running}
-                    value={budgetAmount}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      setBudgetAmount(raw);
-                      const amount = Number(raw);
-                      if (!Number.isSafeInteger(amount)) return;
-                      if (
-                        budget.mode === 'tokens' &&
-                        amount >=
-                          Math.max(
-                            10000,
-                            budgetStarted && thread?.task_budget.mode === 'tokens'
-                              ? thread.task_budget.limit_tokens
-                              : 10000,
-                          ) &&
-                        amount <= 10000000
-                      ) {
-                        setBudget({ mode: 'tokens', limit_tokens: amount });
-                      } else if (
-                        budget.mode === 'weekly_percent' &&
-                        amount >=
-                          Math.max(
-                            1,
-                            budgetStarted && thread?.task_budget.mode === 'weekly_percent'
-                              ? thread.task_budget.limit_percent
-                              : 1,
-                          ) &&
-                        amount <= 100
-                      ) {
-                        setBudget({ mode: 'weekly_percent', limit_percent: amount });
-                      }
-                    }}
-                    onBlur={() =>
-                      setBudgetAmount(
-                        String(
-                          budget.mode === 'tokens' ? budget.limit_tokens : budget.limit_percent,
-                        ),
-                      )
-                    }
-                  />
-                  <span className="text-xs text-muted">
-                    {budget.mode === 'tokens' ? 'tokens' : '%'}
-                  </span>
-                </div>
-              )}
-            </div>
+                Total tokens
+              </option>
+              <option
+                value="weekly_percent"
+                disabled={
+                  agent !== 'codex' ||
+                  (budgetStarted && thread?.task_budget.mode !== 'weekly_percent')
+                }
+              >
+                Weekly usage percentage{agent !== 'codex' ? ' (Codex only)' : ''}
+              </option>
+            </Select>
           </label>
-          <p className="text-xs leading-5 text-muted">
-            {budget.mode === 'weekly_percent'
-              ? 'The number is percentage points of the selected Codex account’s 7-day usage. For example, 5% lets this task use 5 more points of the account’s weekly limit.'
-              : 'Total tokens counts input and output across this task, including later turns.'}{' '}
-            The task pauses when reported usage reaches the budget. A response may finish above it.
-            {budgetStarted && ' After the first turn, you can increase the budget or turn it off.'}
-          </p>
+          {budget.mode !== 'unlimited' && (
+            <label className="grid gap-1.5">
+              {budget.mode === 'tokens' ? 'Token limit' : 'Weekly usage limit'}
+              <div className="flex items-center gap-2">
+                <input
+                  aria-label={budget.mode === 'tokens' ? 'Token limit' : 'Weekly usage limit'}
+                  type="number"
+                  inputMode="numeric"
+                  className="w-32 tabular-nums"
+                  min={
+                    budget.mode === 'tokens'
+                      ? Math.max(
+                          10000,
+                          budgetStarted && thread?.task_budget.mode === 'tokens'
+                            ? thread.task_budget.limit_tokens
+                            : 10000,
+                        )
+                      : Math.max(
+                          1,
+                          budgetStarted && thread?.task_budget.mode === 'weekly_percent'
+                            ? thread.task_budget.limit_percent
+                            : 1,
+                        )
+                  }
+                  max={budget.mode === 'tokens' ? 10000000 : 100}
+                  step={1}
+                  disabled={running}
+                  value={budgetAmount}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setBudgetAmount(raw);
+                    const amount = Number(raw);
+                    if (!Number.isSafeInteger(amount)) return;
+                    if (
+                      budget.mode === 'tokens' &&
+                      amount >=
+                        Math.max(
+                          10000,
+                          budgetStarted && thread?.task_budget.mode === 'tokens'
+                            ? thread.task_budget.limit_tokens
+                            : 10000,
+                        ) &&
+                      amount <= 10000000
+                    ) {
+                      setBudget({ mode: 'tokens', limit_tokens: amount });
+                    } else if (
+                      budget.mode === 'weekly_percent' &&
+                      amount >=
+                        Math.max(
+                          1,
+                          budgetStarted && thread?.task_budget.mode === 'weekly_percent'
+                            ? thread.task_budget.limit_percent
+                            : 1,
+                        ) &&
+                      amount <= 100
+                    ) {
+                      setBudget({ mode: 'weekly_percent', limit_percent: amount });
+                    }
+                  }}
+                  onBlur={() =>
+                    setBudgetAmount(
+                      String(budget.mode === 'tokens' ? budget.limit_tokens : budget.limit_percent),
+                    )
+                  }
+                />
+                <span className="text-xs text-muted">
+                  {budget.mode === 'tokens' ? 'tokens' : '%'}
+                </span>
+              </div>
+            </label>
+          )}
         </div>
       </Modal>
       {folder.dialog}
