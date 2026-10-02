@@ -2074,8 +2074,11 @@ fn codex_app_server_models(
         }
     });
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(20);
     let mut outcome = Err(format!("{} app-server timed out", binary.display()));
+    let mut page_id = 2u64;
+    let mut all_models = Vec::new();
+    let mut seen_cursors = std::collections::HashSet::new();
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
@@ -2088,19 +2091,47 @@ fn codex_app_server_models(
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
             continue;
         };
-        if value.get("id").and_then(serde_json::Value::as_u64) != Some(2) {
+        if value.get("id").and_then(serde_json::Value::as_u64) != Some(page_id) {
             continue;
         }
-        outcome = if let Some(err) = value.get("error") {
-            Err(err
+        if let Some(err) = value.get("error") {
+            outcome = Err(err
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("codex app-server model/list failed")
-                .to_string())
-        } else {
-            Ok(value.pointer("/result/data").cloned().unwrap_or_default())
+                .to_string());
+            break;
+        }
+        let Some(page) = value
+            .pointer("/result/data")
+            .and_then(serde_json::Value::as_array)
+        else {
+            outcome = Err("codex app-server model/list returned invalid data".to_string());
+            break;
         };
-        break;
+        all_models.extend(page.iter().cloned());
+        let cursor = value
+            .pointer("/result/nextCursor")
+            .and_then(serde_json::Value::as_str)
+            .filter(|cursor| !cursor.is_empty());
+        let Some(cursor) = cursor else {
+            outcome = Ok(json!(all_models));
+            break;
+        };
+        if !seen_cursors.insert(cursor.to_string()) || seen_cursors.len() > 50 {
+            outcome = Err("codex app-server model/list repeated a page cursor".to_string());
+            break;
+        }
+        page_id += 1;
+        let next = request(
+            Some(page_id),
+            "model/list",
+            json!({ "includeHidden": false, "cursor": cursor }),
+        );
+        if let Err(err) = stdin.write_all(next.as_bytes()).and_then(|_| stdin.flush()) {
+            outcome = Err(format!("failed to request codex model page: {err}"));
+            break;
+        }
     }
 
     // Close stdin first: the app-server exits on stdin EOF, which also covers

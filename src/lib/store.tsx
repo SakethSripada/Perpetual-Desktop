@@ -34,6 +34,46 @@ export interface Snapshot {
   models: AgentModelCatalog[];
   approvals: ApprovalRequest[];
 }
+export interface ModelPreferences {
+  defaults: Partial<Record<AgentKind, string>>;
+  hidden: Partial<Record<AgentKind, string[]>>;
+  selected: Partial<Record<AgentKind, { model: string; reasoning: string }>>;
+}
+const MODEL_PREFERENCES_KEY = 'model.preferences';
+function readModelPreferences(): ModelPreferences {
+  try {
+    const value = JSON.parse(localStorage.getItem(MODEL_PREFERENCES_KEY) || '{}');
+    const defaults = value?.defaults && typeof value.defaults === 'object' ? value.defaults : {};
+    const hidden = value?.hidden && typeof value.hidden === 'object' ? value.hidden : {};
+    const selected = value?.selected && typeof value.selected === 'object' ? value.selected : {};
+    return {
+      defaults: Object.fromEntries(
+        (['codex', 'claude_code'] as AgentKind[])
+          .filter((agent) => typeof defaults[agent] === 'string')
+          .map((agent) => [agent, defaults[agent]]),
+      ),
+      hidden: Object.fromEntries(
+        (['codex', 'claude_code'] as AgentKind[]).map((agent) => [
+          agent,
+          Array.isArray(hidden[agent])
+            ? hidden[agent].filter((id: unknown) => typeof id === 'string')
+            : [],
+        ]),
+      ),
+      selected: Object.fromEntries(
+        (['codex', 'claude_code'] as AgentKind[])
+          .filter(
+            (agent) =>
+              typeof selected[agent]?.model === 'string' &&
+              typeof selected[agent]?.reasoning === 'string',
+          )
+          .map((agent) => [agent, selected[agent]]),
+      ),
+    };
+  } catch {
+    return { defaults: {}, hidden: {}, selected: {} };
+  }
+}
 const empty: Snapshot = {
   project: null,
   threads: [],
@@ -46,6 +86,10 @@ const empty: Snapshot = {
 };
 type EventListener = (event: AgentThreadEvent) => void;
 interface Store extends Snapshot {
+  modelPreferences: ModelPreferences;
+  setModelDefault: (agent: AgentKind, model: string) => void;
+  setModelVisible: (agent: AgentKind, model: string, visible: boolean) => void;
+  setModelSelection: (agent: AgentKind, model: string, reasoning: string) => void;
   /** True until the first snapshot arrives. */
   loading: boolean;
   error: string | null;
@@ -65,10 +109,69 @@ const Context = createContext<Store>(null!);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState(empty);
+  const [modelPreferences, setModelPreferences] = useState(readModelPreferences);
+  const updateModelPreferences = useCallback(
+    (update: (current: ModelPreferences) => ModelPreferences) => {
+      setModelPreferences((current) => {
+        const next = update(current);
+        try {
+          localStorage.setItem(MODEL_PREFERENCES_KEY, JSON.stringify(next));
+        } catch {
+          /* Keep this session's choice. */
+        }
+        return next;
+      });
+    },
+    [],
+  );
+  const setModelDefault = useCallback(
+    (agent: AgentKind, model: string) => {
+      updateModelPreferences((current) => ({
+        defaults: { ...current.defaults, [agent]: model },
+        selected: { ...current.selected, [agent]: undefined },
+        hidden: {
+          ...current.hidden,
+          [agent]: (current.hidden[agent] ?? []).filter((id) => id !== model),
+        },
+      }));
+    },
+    [updateModelPreferences],
+  );
+  const setModelVisible = useCallback(
+    (agent: AgentKind, model: string, visible: boolean) => {
+      updateModelPreferences((current) => ({
+        defaults:
+          !visible && current.defaults[agent] === model
+            ? { ...current.defaults, [agent]: '' }
+            : current.defaults,
+        hidden: {
+          ...current.hidden,
+          [agent]: visible
+            ? (current.hidden[agent] ?? []).filter((id) => id !== model)
+            : [...new Set([...(current.hidden[agent] ?? []), model])],
+        },
+        selected:
+          !visible && current.selected[agent]?.model === model
+            ? { ...current.selected, [agent]: undefined }
+            : current.selected,
+      }));
+    },
+    [updateModelPreferences],
+  );
+  const setModelSelection = useCallback(
+    (agent: AgentKind, model: string, reasoning: string) => {
+      updateModelPreferences((current) => ({
+        ...current,
+        selected: { ...current.selected, [agent]: { model, reasoning } },
+      }));
+    },
+    [updateModelPreferences],
+  );
   const [loading, setLoading] = useState(native);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const inFlight = useRef<Promise<void> | null>(null);
+  const detectionId = useRef(0);
   const listeners = useRef(new Set<EventListener>());
   const policyRef = useRef<LimitPolicy | null>(null);
   policyRef.current = state.policy;
@@ -115,10 +218,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const detect = useCallback(async () => {
     if (!native) return;
+    const id = ++detectionId.current;
     const [agents, models] = await Promise.all([
       rpc<AgentStatus[]>('detect_agents'),
       rpc<AgentModelCatalog[]>('agent_model_catalog'),
     ]);
+    if (id !== detectionId.current) return;
     setState((old) => ({ ...old, agents, models }));
     await refresh();
   }, [refresh]);
@@ -270,6 +375,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     <Context.Provider
       value={{
         ...state,
+        modelPreferences,
+        setModelDefault,
+        setModelVisible,
+        setModelSelection,
         loading,
         error,
         revision,

@@ -99,8 +99,6 @@ export function Composer({
   const folder = useAddFolder();
   const [text, setText] = useState('');
   const [agent, setAgent] = useState<AgentKind>(() => initialAgent(thread));
-  const [model, setModel] = useState(thread?.model || '');
-  const [reasoning, setReasoning] = useState(thread?.reasoning || '');
   const [permission, setPermission] = useState<PermissionPolicy>(
     thread?.permission || 'workspace_write',
   );
@@ -112,14 +110,24 @@ export function Composer({
   const input = useRef<HTMLTextAreaElement>(null);
 
   const catalog = store.models.find((m) => m.agent === agent);
-  const models = catalog?.models.filter((m) => m.available || m.id === model) ?? [];
+  const selected = store.modelPreferences.selected[agent];
+  const threadUsesAgent = !!thread && (!thread.active_agent || thread.active_agent === agent);
+  const model = selected?.model ?? (threadUsesAgent ? thread?.model || '' : '');
+  const reasoning = selected?.reasoning ?? (threadUsesAgent ? thread?.reasoning || '' : '');
+  const hiddenModels = store.modelPreferences.hidden[agent] ?? [];
+  const preferredDefault = store.modelPreferences.defaults[agent] || '';
+  const models =
+    catalog?.models.filter(
+      (m) => (m.available || m.id === model) && !hiddenModels.includes(m.id),
+    ) ?? [];
   const chosenModel = catalog?.models.find((m) => m.id === model);
   const defaultModel =
+    catalog?.models.find((m) => m.id === preferredDefault) ??
     catalog?.models.find((m) => m.id === catalog.default_model) ??
     catalog?.models.find((m) => m.default);
   const displayedModel = chosenModel ?? (!model ? defaultModel : undefined);
   const modelLabel = displayedModel?.label ?? (model || `${providerName(agent)} chooses`);
-  const defaultReasoning = catalog?.default_reasoning ?? displayedModel?.default_reasoning;
+  const defaultReasoning = displayedModel?.default_reasoning ?? catalog?.default_reasoning;
   const reasoningLabel = reasoning || defaultReasoning || `${providerName(agent)} chooses`;
   const efforts = displayedModel?.reasoning ?? catalog?.reasoning ?? [];
   const running =
@@ -151,10 +159,8 @@ export function Composer({
   useEffect(() => {
     if (thread?.active_agent) {
       setAgent(thread.active_agent);
-      setModel(thread.model || '');
-      setReasoning(thread.reasoning || '');
     }
-  }, [thread?.active_agent, thread?.model, thread?.reasoning]);
+  }, [thread?.id, thread?.active_agent]);
   useEffect(() => {
     if (!thread) return;
     void action(async () => {
@@ -173,8 +179,6 @@ export function Composer({
   const chooseAgent = (next: AgentKind) => {
     picked.current = true;
     setAgent(next);
-    setModel('');
-    setReasoning('');
     if (next === 'claude_code') {
       if (budget.mode === 'weekly_percent') setBudget({ mode: 'unlimited' });
       if (backend === 'docker_sandbox') setBackend('host');
@@ -214,8 +218,7 @@ export function Composer({
           );
           return;
         }
-        setModel(match.id);
-        setReasoning('');
+        store.setModelSelection(agent, match.id, '');
         setText('');
         toast.success(`Model set to ${match.label}`);
         return;
@@ -229,7 +232,7 @@ export function Composer({
           );
           return;
         }
-        setReasoning(command.argument);
+        store.setModelSelection(agent, model || defaultModel?.id || '', command.argument);
         setText('');
         return;
       }
@@ -282,7 +285,7 @@ export function Composer({
         agent,
         permission: runPermission,
         execution_backend: backend,
-        model: model || null,
+        model: model || (!thread ? preferredDefault || null : null),
         reasoning: reasoning || null,
         repo_ids: repos,
         task_budget: budget,
@@ -430,15 +433,11 @@ export function Composer({
                 </MenuSubTrigger>
                 <MenuSubContent className="w-72">
                   <MenuRadioGroup
-                    value={model}
+                    value={model || defaultModel?.id || ''}
                     onValueChange={(v) => {
-                      setModel(v);
-                      setReasoning('');
+                      store.setModelSelection(agent, v, '');
                     }}
                   >
-                    <MenuRadioItem value="">
-                      Default · {defaultModel?.label ?? `${providerName(agent)} chooses`}
-                    </MenuRadioItem>
                     {models.map((m) => (
                       <MenuRadioItem key={m.id} value={m.id}>
                         <span className="truncate">{m.label}</span>
@@ -455,10 +454,12 @@ export function Composer({
                   </span>
                 </MenuSubTrigger>
                 <MenuSubContent className="w-44">
-                  <MenuRadioGroup value={reasoning} onValueChange={setReasoning}>
-                    <MenuRadioItem value="">
-                      Default · {defaultReasoning ?? `${providerName(agent)} chooses`}
-                    </MenuRadioItem>
+                  <MenuRadioGroup
+                    value={reasoning || defaultReasoning || ''}
+                    onValueChange={(value) =>
+                      store.setModelSelection(agent, model || defaultModel?.id || '', value)
+                    }
+                  >
                     {efforts.map((r) => (
                       <MenuRadioItem key={r} value={r}>
                         <span className="capitalize">{r}</span>
