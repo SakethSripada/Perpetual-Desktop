@@ -211,11 +211,27 @@ async fn drive(
     // Codex may update account limits only after the response completes. Make
     // this a short best-effort refresh so a simple response is not held open
     // by an optional usage lookup.
-    let _ = tokio::time::timeout(
-        Duration::from_millis(750),
-        refresh_quota(&rpc, &events_tx, false),
+    let weekly_budget = matches!(
+        spec.policy
+            .as_ref()
+            .and_then(|policy| policy.task_budget.as_ref()),
+        Some(am_proto::TaskBudget::WeeklyPercent { .. })
+    );
+    let quota_result = tokio::time::timeout(
+        if weekly_budget {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_millis(750)
+        },
+        refresh_quota(&rpc, &events_tx, weekly_budget, true),
     )
     .await;
+    if weekly_budget && !matches!(quota_result, Ok(Ok(()))) {
+        let _ = events_tx.send(NormalizedEvent::Error {
+            message: "Codex did not provide a final 7-day usage reading; this budgeted task was paused.".into(),
+            retryable: true,
+        }).await;
+    }
 
     // Tear the child down and finish the stream.
     child.terminate_group();
@@ -242,6 +258,7 @@ async fn refresh_quota(
     rpc: &Rpc,
     events_tx: &mpsc::Sender<NormalizedEvent>,
     required: bool,
+    final_sample: bool,
 ) -> Result<(), String> {
     let quota = match rpc.request("account/rateLimits/read", json!({})).await {
         Ok(quota) => quota,
@@ -250,7 +267,19 @@ async fn refresh_quota(
         }
         Err(_) => return Ok(()),
     };
-    if let Some(event) = parse_quota_window(&quota) {
+    if let Some(NormalizedEvent::QuotaWindow {
+        window,
+        used_percent,
+        reset_at,
+        ..
+    }) = parse_quota_window(&quota)
+    {
+        let event = NormalizedEvent::QuotaWindow {
+            window,
+            used_percent,
+            reset_at,
+            final_sample,
+        };
         let _ = events_tx.send(event).await;
         return Ok(());
     }
@@ -323,7 +352,7 @@ async fn run_turn(
         // Weekly budgets must have a usable account window before their prompt
         // is sent. Unlimited and token-targeted turns do not need this extra
         // synchronous RPC on the critical path.
-        refresh_quota(rpc, events_tx, true).await?;
+        refresh_quota(rpc, events_tx, true, false).await?;
     }
 
     let turn = rpc
@@ -1095,22 +1124,14 @@ fn parse_usage(usage: Option<&Value>) -> Option<NormalizedEvent> {
         .and_then(Value::as_i64)
         .unwrap_or(0)
         .max(0) as u64;
-    let cached_input = usage
-        .get("cached_input_tokens")
-        .or_else(|| usage.get("cachedInputTokens"))
-        .and_then(Value::as_i64)
-        .unwrap_or(0)
-        .max(0) as u64;
     let output = usage
         .get("output_tokens")
         .or_else(|| usage.get("outputTokens"))
         .and_then(Value::as_i64)
         .unwrap_or(0)
         .max(0) as u64;
-    (input + cached_input + output > 0).then_some(NormalizedEvent::TokenUsage {
-        input: input.saturating_add(cached_input),
-        output,
-    })
+    // Codex inputTokens already includes cachedInputTokens.
+    (input + output > 0).then_some(NormalizedEvent::TokenUsage { input, output })
 }
 
 fn parse_quota_window(value: &Value) -> Option<NormalizedEvent> {
@@ -1160,6 +1181,7 @@ fn parse_quota_window(value: &Value) -> Option<NormalizedEvent> {
     Some(NormalizedEvent::QuotaWindow {
         window: QuotaWindowKind::Weekly,
         used_percent: used.clamp(0.0, 100.0),
+        final_sample: false,
         reset_at: map
             .get("reset_at")
             .or_else(|| map.get("resetAt"))
@@ -1535,6 +1557,18 @@ mod tests {
                 reset_at: Some(_),
                 ..
             }) if (used_percent - 18.5).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn cached_input_is_not_added_to_codex_token_total() {
+        let usage = json!({ "inputTokens": 100, "cachedInputTokens": 25, "outputTokens": 40 });
+        assert!(matches!(
+            parse_usage(Some(&usage)),
+            Some(NormalizedEvent::TokenUsage {
+                input: 100,
+                output: 40,
+            })
         ));
     }
 

@@ -5,7 +5,6 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   Monitor,
   Cloud,
-  Box,
   Cpu,
   RefreshCw,
   ExternalLink,
@@ -51,7 +50,6 @@ const sections = [
   { id: 'general', label: 'General', icon: Monitor },
   { id: 'models', label: 'Models', icon: Cpu },
   { id: 'cloud', label: 'Cloud', icon: Cloud },
-  { id: 'sandbox', label: 'Docker Sandbox', icon: Box },
   { id: 'local_model', label: 'Local models', icon: Cpu },
 ] as const;
 type SectionId = (typeof sections)[number]['id'];
@@ -83,7 +81,6 @@ export function Settings({ theme, setTheme }: { theme: Theme; setTheme: (v: Them
           {section === 'general' && <General theme={theme} setTheme={setTheme} />}
           {section === 'models' && <ModelSettings />}
           {section === 'cloud' && <CloudSettings />}
-          {section === 'sandbox' && <SandboxSettings />}
           {section === 'local_model' && <LocalModelSettings />}
         </div>
       </div>
@@ -576,7 +573,7 @@ function CloudSettings() {
   );
 }
 
-function SandboxSettings() {
+export function SandboxSettings() {
   const { policy, save, error } = usePolicy<SandboxPolicy>('sandbox');
   const check = useCheck<SandboxRuntimeStatus>('detect_sandbox_runtime');
   const [prompt, setPrompt] = useState<(SandboxLoginPrompt & { title: string }) | null>(null);

@@ -225,6 +225,7 @@ export function Conversation({
       }}
       onNavigate={onNavigate}
       thread={thread}
+      budgetStarted={Object.keys(turnAgents).length > 0}
       busy={busy}
       onSend={send}
       onStop={() =>
@@ -720,9 +721,11 @@ function EventMessage({
         <div className="min-w-0 break-words selectable">{event.text}</div>
       </div>
     );
+  // Older versions saved a canned greeting as an assistant message. It was
+  // never produced by the selected agent, so do not present it as one.
+  if ((event.data as { source?: string } | null)?.source === 'perpetual') return null;
   if (!event.text?.trim()) return null;
   const streaming = (event.data as { streaming?: boolean } | null)?.streaming === true;
-  const fromPerpetual = (event.data as { source?: string } | null)?.source === 'perpetual';
   const copy = () =>
     void action(async () => {
       await navigator.clipboard.writeText(event.text || '');
@@ -754,12 +757,8 @@ function EventMessage({
   return (
     <article className="group my-4">
       <div className="mb-1.5 flex h-6 items-center gap-2 text-xs font-medium text-muted">
-        {fromPerpetual ? (
-          <img src="/brands/perpetual.png" alt="" className="size-3.5 object-contain" />
-        ) : (
-          <ProviderLogo agent={agent} size={14} />
-        )}
-        {fromPerpetual ? 'Perpetual' : agentName(agent)}
+        <ProviderLogo agent={agent} size={14} />
+        {agentName(agent)}
         {!streaming && <span className="ml-1">{actions}</span>}
       </div>
       <div className="prose-chat">

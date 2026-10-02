@@ -273,6 +273,8 @@ pub enum NormalizedEvent {
         window: QuotaWindowKind,
         used_percent: f64,
         reset_at: Option<DateTime<Utc>>,
+        /// True only for the required account read after a budgeted turn.
+        final_sample: bool,
     },
     AwaitingApproval {
         detail: String,

@@ -224,7 +224,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       rpc<AgentModelCatalog[]>('agent_model_catalog'),
     ]);
     if (id !== detectionId.current) return;
-    setState((old) => ({ ...old, agents, models }));
+    setState((old) => ({
+      ...old,
+      agents,
+      models: models.map((incoming) => {
+        const previous = old.models.find((catalog) => catalog.agent === incoming.agent);
+        if (
+          !previous ||
+          previous.binary_path !== incoming.binary_path ||
+          previous.version !== incoming.version
+        ) {
+          return incoming;
+        }
+        const ids = new Set(incoming.models.map((model) => model.id));
+        return {
+          ...incoming,
+          models: [...incoming.models, ...previous.models.filter((model) => !ids.has(model.id))],
+        };
+      }),
+    }));
     await refresh();
   }, [refresh]);
 

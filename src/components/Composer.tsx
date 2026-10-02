@@ -5,9 +5,9 @@ import {
   ChevronDown,
   FolderGit2,
   FolderOpen,
+  Gauge,
   Square,
   ShieldCheck,
-  SlidersHorizontal,
   TriangleAlert,
 } from 'lucide-react';
 import { commandPrompt, parseCommand, slashCommands } from '../lib/commands';
@@ -84,6 +84,7 @@ export function Composer({
   onCommand,
   onNavigate,
   hero,
+  budgetStarted = false,
 }: {
   thread?: AgentThread;
   draft: { text: string; seq: number };
@@ -94,6 +95,7 @@ export function Composer({
   onStop: () => void;
   /** The larger, centered composer used to start a task. */
   hero?: boolean;
+  budgetStarted?: boolean;
 }) {
   const store = useStore();
   const folder = useAddFolder();
@@ -102,9 +104,15 @@ export function Composer({
   const [permission, setPermission] = useState<PermissionPolicy>(
     thread?.permission || 'workspace_write',
   );
-  const [backend, setBackend] = useState<ExecutionBackend>(thread?.execution_backend || 'host');
   const [repos, setRepos] = useState<string[]>([]);
   const [budget, setBudget] = useState<TaskBudget>(thread?.task_budget || { mode: 'unlimited' });
+  const [budgetAmount, setBudgetAmount] = useState(
+    thread?.task_budget.mode === 'tokens'
+      ? String(thread.task_budget.limit_tokens)
+      : thread?.task_budget.mode === 'weekly_percent'
+        ? String(thread.task_budget.limit_percent)
+        : '',
+  );
   const [options, setOptions] = useState(false);
   const [suggestion, setSuggestion] = useState(0);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -162,6 +170,17 @@ export function Composer({
     }
   }, [thread?.id, thread?.active_agent]);
   useEffect(() => {
+    const next = thread?.task_budget ?? { mode: 'unlimited' as const };
+    setBudget(next);
+    setBudgetAmount(
+      next.mode === 'tokens'
+        ? String(next.limit_tokens)
+        : next.mode === 'weekly_percent'
+          ? String(next.limit_percent)
+          : '',
+    );
+  }, [thread?.id]);
+  useEffect(() => {
     if (!thread) return;
     void action(async () => {
       const links = await rpc<AgentThreadRepo[]>('list_thread_repos', { thread_id: thread.id });
@@ -180,8 +199,11 @@ export function Composer({
     picked.current = true;
     setAgent(next);
     if (next === 'claude_code') {
-      if (budget.mode === 'weekly_percent') setBudget({ mode: 'unlimited' });
-      if (backend === 'docker_sandbox') setBackend('host');
+      if (budget.mode === 'weekly_percent') {
+        setBudget({ mode: 'unlimited' });
+        setBudgetAmount('');
+        toast.info('Weekly usage budgets require Codex. Budget turned off for Claude.');
+      }
     }
     try {
       localStorage.setItem(LAST_AGENT, next);
@@ -284,7 +306,7 @@ export function Composer({
       await onSend(message, {
         agent,
         permission: runPermission,
-        execution_backend: backend,
+        execution_backend: 'host',
         model: model || (!thread ? preferredDefault || null : null),
         reasoning: reasoning || null,
         repo_ids: repos,
@@ -543,16 +565,16 @@ export function Composer({
             </MenuContent>
           </MenuRoot>
 
-          <Tip label="Task options">
+          <Tip label="Usage budget">
             <button
-              aria-label="Task options"
+              aria-label="Usage budget"
               onClick={() => setOptions(true)}
               className={cn(
                 'flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-hover hover:text-ink',
-                (backend !== 'host' || budget.mode !== 'unlimited') && 'text-accent',
+                budget.mode !== 'unlimited' && 'text-accent',
               )}
             >
-              <SlidersHorizontal size={14} />
+              <Gauge size={15} />
             </button>
           </Tip>
 
@@ -614,8 +636,8 @@ export function Composer({
         {budget.mode !== 'unlimited' && (
           <span className="shrink-0 text-faint">
             {budget.mode === 'tokens'
-              ? `${budget.limit_tokens.toLocaleString()}-token budget`
-              : `${budget.limit_percent}% of weekly usage`}
+              ? `${budget.limit_tokens.toLocaleString()} tokens`
+              : `${budget.limit_percent} percentage points of weekly usage`}
           </span>
         )}
       </div>
@@ -623,7 +645,7 @@ export function Composer({
       <Modal
         open={options}
         onOpenChange={setOptions}
-        title="Task options"
+        title="Usage budget"
         width={440}
         footer={
           <Button variant="primary" onClick={() => setOptions(false)}>
@@ -631,78 +653,137 @@ export function Composer({
           </Button>
         }
       >
-        <div className="grid gap-5">
-          <label className="grid gap-1.5 text-[13px]">
-            Run on
-            <Select
-              value={backend}
-              disabled={running}
-              onChange={(e) => setBackend(e.target.value as ExecutionBackend)}
-            >
-              <option value="host">This computer</option>
-              <option value="docker_sandbox" disabled={agent !== 'codex'}>
-                Docker Sandbox{agent !== 'codex' ? ' (Codex only)' : ''}
-              </option>
-            </Select>
-          </label>
-          <div className="grid gap-1.5 text-[13px]">
-            Usage budget
-            <div className="flex gap-2">
+        <div className="grid gap-4 text-[13px]">
+          <label className="grid gap-1.5">
+            Budget type
+            <div className="flex items-center gap-2">
               <Select
-                aria-label="Usage budget"
+                aria-label="Budget type"
                 className="flex-1"
                 value={budget.mode}
-                onChange={(e) =>
-                  setBudget(
-                    e.target.value === 'tokens'
-                      ? { mode: 'tokens', limit_tokens: 200000 }
-                      : e.target.value === 'weekly_percent'
-                        ? { mode: 'weekly_percent', limit_percent: 5 }
-                        : { mode: 'unlimited' },
-                  )
-                }
+                disabled={running}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (next === 'unlimited') {
+                    setBudget({ mode: 'unlimited' });
+                    setBudgetAmount('');
+                  } else if (next === 'tokens') {
+                    const amount = Math.max(
+                      200000,
+                      budgetStarted && thread?.task_budget.mode === 'tokens'
+                        ? thread.task_budget.limit_tokens
+                        : 0,
+                    );
+                    setBudget({ mode: 'tokens', limit_tokens: amount });
+                    setBudgetAmount(String(amount));
+                  } else {
+                    const amount = Math.max(
+                      5,
+                      budgetStarted && thread?.task_budget.mode === 'weekly_percent'
+                        ? thread.task_budget.limit_percent
+                        : 0,
+                    );
+                    setBudget({ mode: 'weekly_percent', limit_percent: amount });
+                    setBudgetAmount(String(amount));
+                  }
+                }}
               >
-                <option value="unlimited">No limit</option>
-                <option value="tokens">Token budget</option>
-                <option value="weekly_percent" disabled={agent !== 'codex'}>
-                  Share of weekly usage{agent !== 'codex' ? ' (Codex only)' : ''}
+                <option value="unlimited">No budget</option>
+                <option
+                  value="tokens"
+                  disabled={budgetStarted && thread?.task_budget.mode !== 'tokens'}
+                >
+                  Total tokens
+                </option>
+                <option
+                  value="weekly_percent"
+                  disabled={
+                    agent !== 'codex' ||
+                    (budgetStarted && thread?.task_budget.mode !== 'weekly_percent')
+                  }
+                >
+                  Weekly usage percentage{agent !== 'codex' ? ' (Codex only)' : ''}
                 </option>
               </Select>
               {budget.mode !== 'unlimited' && (
-                <input
-                  aria-label="Budget amount"
-                  type="number"
-                  className="!w-32 text-right tabular-nums"
-                  min={budget.mode === 'tokens' ? 10000 : 1}
-                  max={budget.mode === 'tokens' ? 10000000 : 100}
-                  step={budget.mode === 'tokens' ? 10000 : 1}
-                  value={budget.mode === 'tokens' ? budget.limit_tokens : budget.limit_percent}
-                  onChange={(e) =>
-                    setBudget(
+                <div className="flex items-center gap-1 rounded-lg border border-line px-2">
+                  <input
+                    aria-label={budget.mode === 'tokens' ? 'Token limit' : 'Weekly usage limit'}
+                    type="number"
+                    inputMode="numeric"
+                    className="!w-24 border-0 bg-transparent text-right tabular-nums outline-none"
+                    min={
                       budget.mode === 'tokens'
-                        ? {
-                            mode: 'tokens',
-                            limit_tokens: Math.min(
-                              10000000,
-                              Math.max(10000, Math.round(+e.target.value || 0)),
-                            ),
-                          }
-                        : {
-                            mode: 'weekly_percent',
-                            limit_percent: Math.min(
-                              100,
-                              Math.max(1, Math.round(+e.target.value || 0)),
-                            ),
-                          },
-                    )
-                  }
-                />
+                        ? Math.max(
+                            10000,
+                            budgetStarted && thread?.task_budget.mode === 'tokens'
+                              ? thread.task_budget.limit_tokens
+                              : 10000,
+                          )
+                        : Math.max(
+                            1,
+                            budgetStarted && thread?.task_budget.mode === 'weekly_percent'
+                              ? thread.task_budget.limit_percent
+                              : 1,
+                          )
+                    }
+                    max={budget.mode === 'tokens' ? 10000000 : 100}
+                    step={1}
+                    disabled={running}
+                    value={budgetAmount}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setBudgetAmount(raw);
+                      const amount = Number(raw);
+                      if (!Number.isSafeInteger(amount)) return;
+                      if (
+                        budget.mode === 'tokens' &&
+                        amount >=
+                          Math.max(
+                            10000,
+                            budgetStarted && thread?.task_budget.mode === 'tokens'
+                              ? thread.task_budget.limit_tokens
+                              : 10000,
+                          ) &&
+                        amount <= 10000000
+                      ) {
+                        setBudget({ mode: 'tokens', limit_tokens: amount });
+                      } else if (
+                        budget.mode === 'weekly_percent' &&
+                        amount >=
+                          Math.max(
+                            1,
+                            budgetStarted && thread?.task_budget.mode === 'weekly_percent'
+                              ? thread.task_budget.limit_percent
+                              : 1,
+                          ) &&
+                        amount <= 100
+                      ) {
+                        setBudget({ mode: 'weekly_percent', limit_percent: amount });
+                      }
+                    }}
+                    onBlur={() =>
+                      setBudgetAmount(
+                        String(
+                          budget.mode === 'tokens' ? budget.limit_tokens : budget.limit_percent,
+                        ),
+                      )
+                    }
+                  />
+                  <span className="text-xs text-muted">
+                    {budget.mode === 'tokens' ? 'tokens' : '%'}
+                  </span>
+                </div>
               )}
             </div>
-            <span className="text-xs leading-5 text-muted">
-              The task pauses at the end of the step that reaches the budget.
-            </span>
-          </div>
+          </label>
+          <p className="text-xs leading-5 text-muted">
+            {budget.mode === 'weekly_percent'
+              ? 'The number is percentage points of the selected Codex account’s 7-day usage. For example, 5% lets this task use 5 more points of the account’s weekly limit.'
+              : 'Total tokens counts input and output across this task, including later turns.'}{' '}
+            The task pauses when reported usage reaches the budget. A response may finish above it.
+            {budgetStarted && ' After the first turn, you can increase the budget or turn it off.'}
+          </p>
         </div>
       </Modal>
       {folder.dialog}

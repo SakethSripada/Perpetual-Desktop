@@ -1295,16 +1295,23 @@ impl AppCore {
         task: &Task,
         requested: Option<ExecutionBackend>,
     ) -> Result<ExecutionBackend, CoreError> {
+        if requested == Some(ExecutionBackend::DockerSandbox) {
+            return Err(CoreError::Other(
+                "Docker Sandbox is disabled in Perpetual.".into(),
+            ));
+        }
         if let Some(requested) = requested {
             return Ok(requested);
         }
         if let Some(link) = am_db::repos::task_repo::get_for_task(&self.db.pool, &task.id).await? {
             if link.worktree_path.is_some() {
-                return Ok(link.workspace_backend);
+                return Ok(match link.workspace_backend {
+                    ExecutionBackend::DockerSandbox => ExecutionBackend::Host,
+                    backend => backend,
+                });
             }
         }
-        let policy = self.get_sandbox_policy().await.unwrap_or_default();
-        Ok(policy.default_backend)
+        Ok(ExecutionBackend::Host)
     }
 
     async fn latest_resumable_session_ref(
@@ -1343,7 +1350,11 @@ impl AppCore {
     ) -> Result<(PathBuf, String, String), CoreError> {
         if let Some(link) = am_db::repos::task_repo::get_for_task(&self.db.pool, &task.id).await? {
             if let (Some(wt), Some(base)) = (link.worktree_path.clone(), link.base_ref.clone()) {
-                if link.workspace_backend == backend && Path::new(&wt).exists() {
+                if (link.workspace_backend == backend
+                    || (backend == ExecutionBackend::Host
+                        && link.workspace_backend == ExecutionBackend::DockerSandbox))
+                    && Path::new(&wt).exists()
+                {
                     return Ok((PathBuf::from(wt), link.branch.unwrap_or_default(), base));
                 }
             }
