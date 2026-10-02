@@ -637,7 +637,7 @@ export function Composer({
           <span className="shrink-0 text-faint">
             {budget.mode === 'tokens'
               ? `${budget.limit_tokens.toLocaleString()} tokens`
-              : `${budget.limit_percent} percentage points of weekly usage`}
+              : `${budget.limit_percent}% of weekly usage`}
           </span>
         )}
       </div>
