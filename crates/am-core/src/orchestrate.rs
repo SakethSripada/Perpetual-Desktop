@@ -160,9 +160,19 @@ impl AppCore {
         crate::provider_accounts::invalidate_account_probes();
         let mut out = Vec::new();
 
-        for adapter in self.agents.implemented() {
-            let status = self.record_agent_probe(adapter.detect().await).await?;
-            out.push(status);
+        let probes: Vec<_> = self
+            .agents
+            .implemented()
+            .into_iter()
+            .map(|adapter| tokio::spawn(async move { adapter.detect().await }))
+            .collect();
+        // Independent provider CLIs can probe concurrently. Preserve settings
+        // order while avoiding the sum of their cold-start latencies.
+        for probe in probes {
+            let detected = probe
+                .await
+                .map_err(|err| CoreError::Other(err.to_string()))?;
+            out.push(self.record_agent_probe(detected).await?);
         }
 
         Ok(out)
