@@ -5,7 +5,6 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   Monitor,
   Cloud,
-  Box,
   Cpu,
   RefreshCw,
   ExternalLink,
@@ -21,8 +20,10 @@ import { toast } from 'sonner';
 import type { Theme } from '../App';
 import { action, native, rpc } from '../lib/api';
 import { errorMessage, providerName } from '../lib/format';
+import { useStore } from '../lib/store';
 import { credentialStore, keys } from '../lib/platform';
 import type {
+  AgentKind,
   CloudAvailability,
   CloudPolicy,
   LocalModelPolicy,
@@ -47,8 +48,8 @@ import {
 const REPO = 'https://github.com/SakethSripada/Perpetual-Desktop';
 const sections = [
   { id: 'general', label: 'General', icon: Monitor },
+  { id: 'models', label: 'Models', icon: Cpu },
   { id: 'cloud', label: 'Cloud', icon: Cloud },
-  { id: 'sandbox', label: 'Docker Sandbox', icon: Box },
   { id: 'local_model', label: 'Local models', icon: Cpu },
 ] as const;
 type SectionId = (typeof sections)[number]['id'];
@@ -78,11 +79,81 @@ export function Settings({ theme, setTheme }: { theme: Theme; setTheme: (v: Them
         </nav>
         <div className="min-w-0 flex-1">
           {section === 'general' && <General theme={theme} setTheme={setTheme} />}
+          {section === 'models' && <ModelSettings />}
           {section === 'cloud' && <CloudSettings />}
-          {section === 'sandbox' && <SandboxSettings />}
           {section === 'local_model' && <LocalModelSettings />}
         </div>
       </div>
+    </>
+  );
+}
+
+function ModelSettings() {
+  const store = useStore();
+  return (
+    <>
+      {(['codex', 'claude_code'] as AgentKind[]).map((agent) => {
+        const catalog = store.models.find((entry) => entry.agent === agent);
+        const preferred = store.modelPreferences.defaults[agent] ?? '';
+        const hidden = store.modelPreferences.hidden[agent] ?? [];
+        return (
+          <Section
+            key={agent}
+            title={`${providerName(agent)} models`}
+            description="Choose the model for new tasks and which models appear in the chat picker."
+            actions={
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => void action(() => store.detect())}
+              >
+                <RefreshCw size={13} /> Refresh
+              </Button>
+            }
+          >
+            <Row
+              label="Default model"
+              description="Used for new tasks unless you choose another model in chat."
+            >
+              <Select
+                aria-label={`${providerName(agent)} default model`}
+                value={preferred}
+                onChange={(event) => store.setModelDefault(agent, event.target.value)}
+                className="max-w-56"
+              >
+                <option value="">Use provider default</option>
+                {catalog?.models
+                  .filter((model) => model.available)
+                  .map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.label}
+                    </option>
+                  ))}
+                {preferred && !catalog?.models.some((model) => model.id === preferred) && (
+                  <option value={preferred}>{preferred}</option>
+                )}
+              </Select>
+            </Row>
+            <div className="divide-y divide-line/60">
+              {catalog?.models.map((model) => (
+                <Row key={model.id} label={model.label} description={model.id}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    aria-label={`${hidden.includes(model.id) ? 'Show' : 'Hide'} ${model.label}`}
+                    onClick={() =>
+                      store.setModelVisible(agent, model.id, hidden.includes(model.id))
+                    }
+                  >
+                    {hidden.includes(model.id) ? 'Show' : 'Hide'}
+                  </Button>
+                </Row>
+              ))}
+              {!catalog && <p className="py-4 text-xs text-muted">Detecting models…</p>}
+            </div>
+          </Section>
+        );
+      })}
     </>
   );
 }
@@ -502,7 +573,7 @@ function CloudSettings() {
   );
 }
 
-function SandboxSettings() {
+export function SandboxSettings() {
   const { policy, save, error } = usePolicy<SandboxPolicy>('sandbox');
   const check = useCheck<SandboxRuntimeStatus>('detect_sandbox_runtime');
   const [prompt, setPrompt] = useState<(SandboxLoginPrompt & { title: string }) | null>(null);

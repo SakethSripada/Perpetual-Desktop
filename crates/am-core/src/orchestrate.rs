@@ -160,9 +160,19 @@ impl AppCore {
         crate::provider_accounts::invalidate_account_probes();
         let mut out = Vec::new();
 
-        for adapter in self.agents.implemented() {
-            let status = self.record_agent_probe(adapter.detect().await).await?;
-            out.push(status);
+        let probes: Vec<_> = self
+            .agents
+            .implemented()
+            .into_iter()
+            .map(|adapter| tokio::spawn(async move { adapter.detect().await }))
+            .collect();
+        // Independent provider CLIs can probe concurrently. Preserve settings
+        // order while avoiding the sum of their cold-start latencies.
+        for probe in probes {
+            let detected = probe
+                .await
+                .map_err(|err| CoreError::Other(err.to_string()))?;
+            out.push(self.record_agent_probe(detected).await?);
         }
 
         Ok(out)
@@ -1295,16 +1305,23 @@ impl AppCore {
         task: &Task,
         requested: Option<ExecutionBackend>,
     ) -> Result<ExecutionBackend, CoreError> {
+        if requested == Some(ExecutionBackend::DockerSandbox) {
+            return Err(CoreError::Other(
+                "Docker Sandbox is disabled in Perpetual.".into(),
+            ));
+        }
         if let Some(requested) = requested {
             return Ok(requested);
         }
         if let Some(link) = am_db::repos::task_repo::get_for_task(&self.db.pool, &task.id).await? {
             if link.worktree_path.is_some() {
-                return Ok(link.workspace_backend);
+                return Ok(match link.workspace_backend {
+                    ExecutionBackend::DockerSandbox => ExecutionBackend::Host,
+                    backend => backend,
+                });
             }
         }
-        let policy = self.get_sandbox_policy().await.unwrap_or_default();
-        Ok(policy.default_backend)
+        Ok(ExecutionBackend::Host)
     }
 
     async fn latest_resumable_session_ref(
@@ -1343,7 +1360,11 @@ impl AppCore {
     ) -> Result<(PathBuf, String, String), CoreError> {
         if let Some(link) = am_db::repos::task_repo::get_for_task(&self.db.pool, &task.id).await? {
             if let (Some(wt), Some(base)) = (link.worktree_path.clone(), link.base_ref.clone()) {
-                if link.workspace_backend == backend && Path::new(&wt).exists() {
+                if (link.workspace_backend == backend
+                    || (backend == ExecutionBackend::Host
+                        && link.workspace_backend == ExecutionBackend::DockerSandbox))
+                    && Path::new(&wt).exists()
+                {
                     return Ok((PathBuf::from(wt), link.branch.unwrap_or_default(), base));
                 }
             }
@@ -2074,8 +2095,11 @@ fn codex_app_server_models(
         }
     });
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(20);
     let mut outcome = Err(format!("{} app-server timed out", binary.display()));
+    let mut page_id = 2u64;
+    let mut all_models = Vec::new();
+    let mut seen_cursors = std::collections::HashSet::new();
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
@@ -2088,19 +2112,47 @@ fn codex_app_server_models(
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
             continue;
         };
-        if value.get("id").and_then(serde_json::Value::as_u64) != Some(2) {
+        if value.get("id").and_then(serde_json::Value::as_u64) != Some(page_id) {
             continue;
         }
-        outcome = if let Some(err) = value.get("error") {
-            Err(err
+        if let Some(err) = value.get("error") {
+            outcome = Err(err
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("codex app-server model/list failed")
-                .to_string())
-        } else {
-            Ok(value.pointer("/result/data").cloned().unwrap_or_default())
+                .to_string());
+            break;
+        }
+        let Some(page) = value
+            .pointer("/result/data")
+            .and_then(serde_json::Value::as_array)
+        else {
+            outcome = Err("codex app-server model/list returned invalid data".to_string());
+            break;
         };
-        break;
+        all_models.extend(page.iter().cloned());
+        let cursor = value
+            .pointer("/result/nextCursor")
+            .and_then(serde_json::Value::as_str)
+            .filter(|cursor| !cursor.is_empty());
+        let Some(cursor) = cursor else {
+            outcome = Ok(json!(all_models));
+            break;
+        };
+        if !seen_cursors.insert(cursor.to_string()) || seen_cursors.len() > 50 {
+            outcome = Err("codex app-server model/list repeated a page cursor".to_string());
+            break;
+        }
+        page_id += 1;
+        let next = request(
+            Some(page_id),
+            "model/list",
+            json!({ "includeHidden": false, "cursor": cursor }),
+        );
+        if let Err(err) = stdin.write_all(next.as_bytes()).and_then(|_| stdin.flush()) {
+            outcome = Err(format!("failed to request codex model page: {err}"));
+            break;
+        }
     }
 
     // Close stdin first: the app-server exits on stdin EOF, which also covers

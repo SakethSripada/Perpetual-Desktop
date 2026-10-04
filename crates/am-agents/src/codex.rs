@@ -809,22 +809,14 @@ fn parse_usage(usage: Option<&Value>) -> Option<NormalizedEvent> {
         .and_then(|x| x.as_i64())
         .unwrap_or(0)
         .max(0) as u64;
-    let cached_input = usage
-        .get("cached_input_tokens")
-        .or_else(|| usage.get("cachedInputTokens"))
-        .and_then(|x| x.as_i64())
-        .unwrap_or(0)
-        .max(0) as u64;
     let output = usage
         .get("output_tokens")
         .and_then(|x| x.as_i64())
         .unwrap_or(0)
         .max(0) as u64;
-    if input + cached_input + output > 0 {
-        Some(NormalizedEvent::TokenUsage {
-            input: input.saturating_add(cached_input),
-            output,
-        })
+    // Codex input_tokens already includes cached input tokens.
+    if input + output > 0 {
+        Some(NormalizedEvent::TokenUsage { input, output })
     } else {
         None
     }
@@ -1293,7 +1285,7 @@ mod tests {
         assert!(matches!(
             &parsed.events[0],
             NormalizedEvent::TokenUsage {
-                input: 125,
+                input: 100,
                 output: 40
             }
         ));

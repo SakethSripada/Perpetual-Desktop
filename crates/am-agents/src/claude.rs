@@ -456,6 +456,7 @@ async fn drive(
     let mut saw_result = false;
     let mut saw_structured_output = false;
     let mut seen_usage_message_ids = HashSet::new();
+    let mut usage_totals = MessageUsageTotals::default();
     let hard_timeout = tokio::time::sleep(limits.run_timeout);
     let idle_timeout = tokio::time::sleep(limits.idle_timeout);
     let startup_timeout = tokio::time::sleep(limits.startup_timeout);
@@ -487,14 +488,25 @@ async fn drive(
                                 drop(input_tx.take());
                             }
                             let message_id = usage_message_id(&value);
+                            let is_result = value.get("type").and_then(Value::as_str) == Some("result");
                             for event in parse_line(&value) {
-                                if matches!(&event, NormalizedEvent::TokenUsage { .. })
-                                    && message_id.as_ref().is_some_and(|id| {
-                                        !seen_usage_message_ids.insert(id.clone())
-                                    })
-                                {
-                                    continue;
-                                }
+                                let event = match event {
+                                    NormalizedEvent::TokenUsage { input, output } if is_result => {
+                                        // Claude's result usage summarizes the whole run. Emit
+                                        // only tokens missing from message-level reports.
+                                        let (input, output) = usage_totals.result_delta(input, output);
+                                        if input == 0 && output == 0 { continue; }
+                                        NormalizedEvent::TokenUsage { input, output }
+                                    }
+                                    NormalizedEvent::TokenUsage { input, output } => {
+                                        if message_id.as_ref().is_some_and(|id| {
+                                            !seen_usage_message_ids.insert(id.clone())
+                                        }) { continue; }
+                                        usage_totals.record_message(input, output);
+                                        NormalizedEvent::TokenUsage { input, output }
+                                    }
+                                    other => other,
+                                };
                                 if tx.send(event).await.is_err() {
                                     cancelled = true; // receiver gone
                                     break;
@@ -610,6 +622,26 @@ async fn drive(
 
     if let Some(task) = stderr_task {
         task.abort();
+    }
+}
+
+#[derive(Default)]
+struct MessageUsageTotals {
+    input: u64,
+    output: u64,
+}
+
+impl MessageUsageTotals {
+    fn record_message(&mut self, input: u64, output: u64) {
+        self.input = self.input.saturating_add(input);
+        self.output = self.output.saturating_add(output);
+    }
+
+    fn result_delta(&self, input: u64, output: u64) -> (u64, u64) {
+        (
+            input.saturating_sub(self.input),
+            output.saturating_sub(self.output),
+        )
     }
 }
 
@@ -749,12 +781,19 @@ fn token_usage_event(usage: &Value) -> Option<NormalizedEvent> {
         .or_else(|| usage.get("cached_input_tokens"))
         .and_then(|x| x.as_u64())
         .unwrap_or(0);
+    let cache_creation = usage
+        .get("cache_creation_input_tokens")
+        .or_else(|| usage.get("cached_creation_input_tokens"))
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0);
     let output = usage
         .get("output_tokens")
         .and_then(|x| x.as_u64())
         .unwrap_or(0);
-    (input + cached_input + output > 0).then_some(NormalizedEvent::TokenUsage {
-        input: input.saturating_add(cached_input),
+    (input + cached_input + cache_creation + output > 0).then_some(NormalizedEvent::TokenUsage {
+        input: input
+            .saturating_add(cached_input)
+            .saturating_add(cache_creation),
         output,
     })
 }
@@ -818,6 +857,14 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn result_usage_only_adds_tokens_missing_from_messages() {
+        let mut usage = MessageUsageTotals::default();
+        usage.record_message(100, 20);
+        usage.record_message(120, 30);
+        assert_eq!(usage.result_delta(250, 60), (30, 10));
+        assert_eq!(usage.result_delta(200, 40), (0, 0));
+    }
 
     #[test]
     fn tool_calls_and_results_share_the_provider_id() {
@@ -1137,6 +1184,7 @@ mod tests {
                 "usage": {
                     "input_tokens": 100,
                     "cache_read_input_tokens": 25,
+                    "cache_creation_input_tokens": 15,
                     "output_tokens": 10
                 }
             }
@@ -1145,7 +1193,7 @@ mod tests {
         assert!(matches!(
             events.as_slice(),
             [NormalizedEvent::TokenUsage {
-                input: 125,
+                input: 140,
                 output: 10
             }]
         ));

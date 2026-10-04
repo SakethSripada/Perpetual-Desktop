@@ -382,11 +382,12 @@ pub async fn dispatch(core: &AppCore, req: DaemonRequest) -> Result<DaemonRespon
         Q::DetectSandboxRuntime => {
             A::SandboxRuntimeStatus(core.detect_sandbox_runtime().await.map_err(s)?)
         }
-        Q::SandboxLogin => A::SandboxLoginPrompt(core.sandbox_login().await.map_err(s)?),
-        Q::CodexSandboxLogin => A::SandboxLoginPrompt(core.codex_sandbox_login().await.map_err(s)?),
+        Q::SandboxLogin | Q::CodexSandboxLogin => {
+            return Err("Docker Sandbox is disabled in Perpetual.".into());
+        }
         Q::GetSandboxPolicy => A::SandboxPolicy(core.get_sandbox_policy().await.map_err(s)?),
-        Q::SetSandboxPolicy(policy) => {
-            A::SandboxPolicy(core.set_sandbox_policy(policy).await.map_err(s)?)
+        Q::SetSandboxPolicy(_) => {
+            return Err("Docker Sandbox is disabled in Perpetual.".into());
         }
         Q::GetCloudPolicy => A::CloudPolicy(core.get_cloud_policy().await.map_err(s)?),
         Q::SetCloudPolicy(policy) => {

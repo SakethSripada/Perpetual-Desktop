@@ -80,8 +80,22 @@ fn cli_name(agent: AgentKind) -> &'static str {
 
 impl AppCore {
     pub async fn provider_account_statuses(&self) -> Result<Vec<ProviderAccountStatus>, CoreError> {
-        self.sync_system_provider_accounts().await?;
-        let accounts = self.get_limit_policy().await?.accounts;
+        self.provider_account_statuses_for(None).await
+    }
+
+    // Starting Codex must not wait for Claude's login probe (or vice versa).
+    async fn provider_account_statuses_for(
+        &self,
+        agent: Option<AgentKind>,
+    ) -> Result<Vec<ProviderAccountStatus>, CoreError> {
+        self.sync_system_provider_accounts_for(agent).await?;
+        let accounts: Vec<_> = self
+            .get_limit_policy()
+            .await?
+            .accounts
+            .into_iter()
+            .filter(|account| agent.is_none_or(|agent| account.agent == agent))
+            .collect();
         let probes = self.probe_accounts(&accounts).await;
         let mut out = Vec::with_capacity(accounts.len());
         for (account, probe) in accounts.into_iter().zip(probes) {
@@ -118,22 +132,39 @@ impl AppCore {
     /// Registers the provider CLI's own sign-in as an account the first time it
     /// is found signed in, so an installed, signed-in CLI is never shown as a
     /// provider with no accounts. Removing it from the pool is remembered.
-    async fn sync_system_provider_accounts(&self) -> Result<(), CoreError> {
+    async fn sync_system_provider_accounts_for(
+        &self,
+        only: Option<AgentKind>,
+    ) -> Result<(), CoreError> {
+        let policy = self.get_limit_policy().await?;
+        let candidates: Vec<_> = [AgentKind::Codex, AgentKind::ClaudeCode]
+            .into_iter()
+            .filter(|agent| only.is_none_or(|selected| selected == *agent))
+            .filter(|agent| !policy.dismissed_system_accounts.contains(agent))
+            .filter(|agent| {
+                !policy
+                    .accounts
+                    .iter()
+                    .any(|a| a.agent == *agent && a.auth_mode == ProviderAccountAuthMode::System)
+            })
+            .map(system_account)
+            .collect();
+        if candidates.is_empty() {
+            return Ok(());
+        }
+        // Never hold the policy lock across external CLI probes: a background
+        // all-provider refresh must not block a selected-provider launch.
+        let probes = self.probe_accounts(&candidates).await;
         let _guard = sync_lock().lock().await;
         let mut policy = self.get_limit_policy().await?;
         let mut added = false;
-        for agent in [AgentKind::Codex, AgentKind::ClaudeCode] {
-            if policy.dismissed_system_accounts.contains(&agent)
-                || policy
-                    .accounts
-                    .iter()
-                    .any(|a| a.agent == agent && a.auth_mode == ProviderAccountAuthMode::System)
+        for (account, probe) in candidates.into_iter().zip(probes) {
+            if probe.authenticated
+                && !policy.dismissed_system_accounts.contains(&account.agent)
+                && !policy.accounts.iter().any(|a| {
+                    a.agent == account.agent && a.auth_mode == ProviderAccountAuthMode::System
+                })
             {
-                continue;
-            }
-            let account = system_account(agent);
-            let probe = self.probe_accounts(std::slice::from_ref(&account)).await;
-            if probe.first().is_some_and(|p| p.authenticated) {
                 policy.accounts.push(account);
                 added = true;
             }
@@ -315,10 +346,9 @@ impl AppCore {
         agent: AgentKind,
     ) -> Result<AccountSelection, CoreError> {
         let statuses: Vec<_> = self
-            .provider_account_statuses()
+            .provider_account_statuses_for(Some(agent))
             .await?
             .into_iter()
-            .filter(|s| s.account.agent == agent)
             .collect();
         if statuses.is_empty() {
             return Ok(AccountSelection::Unmanaged);

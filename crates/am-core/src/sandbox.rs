@@ -101,13 +101,21 @@ impl AppCore {
         else {
             return Ok(SandboxPolicy::default());
         };
-        serde_json::from_str(&raw).map_err(|e| CoreError::Other(e.to_string()))
+        let mut policy: SandboxPolicy =
+            serde_json::from_str(&raw).map_err(|e| CoreError::Other(e.to_string()))?;
+        policy.default_backend = ExecutionBackend::Host;
+        Ok(policy)
     }
 
     pub async fn set_sandbox_policy(
         &self,
         policy: SandboxPolicy,
     ) -> Result<SandboxPolicy, CoreError> {
+        if policy.default_backend == ExecutionBackend::DockerSandbox {
+            return Err(CoreError::Other(
+                "Docker Sandbox is disabled in Perpetual.".into(),
+            ));
+        }
         let normalized = normalize_policy(policy);
         let value =
             serde_json::to_string(&normalized).map_err(|e| CoreError::Other(e.to_string()))?;
@@ -372,6 +380,11 @@ impl AppCore {
         backend: ExecutionBackend,
         sandbox_name: Option<String>,
     ) -> Result<(SessionRuntime, Option<SandboxLease>), CoreError> {
+        if backend == ExecutionBackend::DockerSandbox {
+            return Err(CoreError::Other(
+                "Docker Sandbox is disabled in Perpetual.".into(),
+            ));
+        }
         let policy = self.get_sandbox_policy().await.unwrap_or_default();
         let limits = RuntimeLimits {
             startup_timeout: std::time::Duration::from_secs(120),
