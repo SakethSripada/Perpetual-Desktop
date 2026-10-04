@@ -429,6 +429,8 @@ impl AppCore {
         message: Option<PendingThreadMessage>,
         execution_backend: Option<ExecutionBackend>,
     ) -> Result<String, CoreError> {
+        let startup_started = std::time::Instant::now();
+        let _launch = self.sessions.lock_start(thread_id).await;
         if self.has_active_collaboration_assignment(thread_id).await? {
             return Err(CoreError::Other(
                 "This session is assigned to another device. Cancel or finish that assignment before starting a local run."
@@ -436,6 +438,30 @@ impl AppCore {
             ));
         }
         if self.sessions.is_active(thread_id).await {
+            // Another send may have passed its active check while this turn
+            // was still starting. Preserve that follow-up instead of spawning
+            // a second provider process or reporting a spurious send failure.
+            if let Some(message) = message.as_ref() {
+                let queued = am_db::repos::queued_turn::enqueue_with_echo(
+                    &self.db.pool,
+                    thread_id,
+                    agent,
+                    &permission_to_string(permission),
+                    &message.text,
+                    None,
+                    message.echo_user_message,
+                    message.client_message_id.as_deref(),
+                )
+                .await?;
+                self.activity(
+                    None,
+                    None,
+                    "thread.message_queued",
+                    json!({ "thread_id": thread_id, "queue_id": queued.id }),
+                )
+                .await?;
+                return Ok(queued.id);
+            }
             return Err(CoreError::Other("agent thread is already running".into()));
         }
         if am_db::repos::cloud_run::active_for_thread(&self.db.pool, thread_id)
@@ -496,6 +522,7 @@ impl AppCore {
             ));
         }
         validate_runtime_budget(&thread.task_budget, agent, backend, local_model.is_some())?;
+        let preflight_ms = startup_started.elapsed().as_millis();
         let account = if local_model.is_some() {
             None
         } else {
@@ -535,6 +562,7 @@ impl AppCore {
                 }
             }
         };
+        let account_ready_ms = startup_started.elapsed().as_millis();
         if local_model.is_none() && account.is_none() {
             if let Some(reset_at) = self.known_limited_agent_reset(agent).await? {
                 if crate::budget::is_percentage_budget(&thread.task_budget) {
@@ -545,6 +573,9 @@ impl AppCore {
                         "Percentage budgets pause when the selected provider is limited; they do not switch providers because quota percentages are not comparable.".into(),
                     ));
                 }
+                // The fallback re-enters run_agent_thread_inner with a new
+                // provider; release startup ownership before that recursion.
+                drop(_launch);
                 return self
                     .start_known_limited_thread_fallback(
                         thread,
@@ -615,7 +646,10 @@ impl AppCore {
                 }
                 None => (target_hash, legacy_target_hash),
             };
-        if backend == ExecutionBackend::Host {
+        // Account selection has already checked the chosen profile's binary and
+        // sign-in. Probing the default CLI again adds startup latency and says
+        // nothing about a managed profile's credentials.
+        if backend == ExecutionBackend::Host && account.is_none() {
             let status = match self.fresh_ready_agent_status(agent).await? {
                 Some(status) => status,
                 None => self.record_agent_probe(adapter.detect().await).await?,
@@ -638,10 +672,12 @@ impl AppCore {
             .await?;
         self.render_thread_context_files(&thread, &workspace.path)
             .await?;
+        let workspace_ready_ms = startup_started.elapsed().as_millis();
         let prior = self
             .latest_thread_session_ref(thread_id, agent, &target_hash, &legacy_target_hash)
             .await?;
         let resumed_agent_session_id = prior.as_ref().map(|p| p.agent_session_id.clone());
+        let has_history = prior.is_some() || !thread.progress.trim().is_empty();
         // A resume/fallback turn is started with no message (`None`). If the user
         // sent input that is still pending (e.g. their question was carried over
         // from a turn that hit a usage limit, or queued while the agent ran),
@@ -732,7 +768,7 @@ impl AppCore {
             policy.envelope_id.as_deref(),
         )
         .await?;
-        let user_message = match (&message, prior.is_some()) {
+        let user_message = match (&message, has_history) {
             (Some(msg), _) if msg.echo_user_message => Some(msg.text.trim()),
             (Some(_), _) => None,
             (None, false) => Some(thread.objective.trim()),
@@ -770,6 +806,12 @@ impl AppCore {
                 "turn_id": turn.id,
                 "agent": agent.as_str(),
                 "resumed_agent_session_id": resumed_agent_session_id,
+                "startup_timing_ms": {
+                    "preflight": preflight_ms,
+                    "account_ready": account_ready_ms,
+                    "workspace_ready": workspace_ready_ms,
+                    "turn_ready": startup_started.elapsed().as_millis(),
+                },
             }),
         )
         .await?;
@@ -796,9 +838,9 @@ impl AppCore {
                 .collect::<Vec<_>>();
             add_managed_git_safe_directories(&mut runtime_policy.launch_env, &managed_repos)?;
         }
-        let mut prompt = match (&message, prior.is_some()) {
-            (Some(msg), true) => build_thread_followup_prompt(&thread, &msg.text),
-            (Some(msg), false) => {
+        let mut prompt = match (&message, has_history) {
+            (Some(msg), _) if prior.is_some() => build_thread_followup_prompt(&thread, &msg.text),
+            (Some(msg), _) => {
                 build_thread_initial_prompt(&thread, &msg.text, context_files_available)
             }
             (None, true) => build_thread_resume_prompt(&thread, context_files_available),
@@ -1388,6 +1430,7 @@ impl AppCore {
         let mut saw_token_telemetry = false;
         let mut saw_final_weekly_telemetry = false;
         let mut streaming_assistant: Option<AgentThreadEvent> = None;
+        let mut stream_checkpoint = std::time::Instant::now();
         let usage_turn = am_db::repos::agent_turn::get(&self.db.pool, &turn_id)
             .await
             .ok()
@@ -1420,11 +1463,46 @@ impl AppCore {
             .as_ref()
             .and_then(|turn| turn.policy_envelope_id.clone());
 
-        while let Some(event) = events.recv().await {
+        let mut stream_dirty = false;
+        let mut stream_tick = tokio::time::interval(std::time::Duration::from_millis(16));
+        stream_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            let event = tokio::select! {
+                biased;
+                _ = stream_tick.tick(), if stream_dirty => {
+                    if let Some(streamed) = streaming_assistant.as_ref() {
+                        self.events.publish(AppEvent::AgentThreadEvent(streamed.clone()));
+                        if stream_checkpoint.elapsed() >= std::time::Duration::from_millis(100) {
+                            let _ = am_db::repos::agent_thread_message::upsert(&self.db.pool, streamed).await;
+                            stream_checkpoint = std::time::Instant::now();
+                        }
+                    }
+                    stream_dirty = false;
+                    continue;
+                }
+                event = events.recv() => event,
+            };
+            let event = match event {
+                Some(event) => event,
+                None => {
+                    let error = map_thread_event(&thread_id, &turn_id, &NormalizedEvent::Error {
+                        message: "The provider disconnected before finishing. Your progress is saved; please try again.".into(),
+                        retryable: true,
+                    });
+                    let _ = am_db::repos::agent_thread_message::insert(&self.db.pool, &error).await;
+                    self.events.publish(AppEvent::AgentThreadEvent(error));
+                    // A crashed adapter still needs the normal terminal path:
+                    // save partial output, release approvals, and finish the turn.
+                    NormalizedEvent::SessionEnded {
+                        status: SessionStatus::Failed,
+                    }
+                }
+            };
             if let NormalizedEvent::AssistantTextDelta { delta } = &event {
                 if delta.is_empty() {
                     continue;
                 }
+                let first_delta = streaming_assistant.is_none();
                 let mut streamed = if let Some(mut streamed) = streaming_assistant.take() {
                     streamed
                         .text
@@ -1435,15 +1513,24 @@ impl AppCore {
                     map_thread_event(&thread_id, &turn_id, &event)
                 };
                 streamed.data = json!({ "streaming": true });
-                let _ = am_db::repos::agent_thread_message::upsert(&self.db.pool, &streamed).await;
-                self.events
-                    .publish(AppEvent::AgentThreadEvent(streamed.clone()));
+                // First text is immediate. Subsequent tokens share one snapshot
+                // per display frame, before serialization, IPC and replay storage.
+                if first_delta {
+                    self.events
+                        .publish(AppEvent::AgentThreadEvent(streamed.clone()));
+                    let _ =
+                        am_db::repos::agent_thread_message::upsert(&self.db.pool, &streamed).await;
+                    stream_checkpoint = std::time::Instant::now();
+                } else {
+                    stream_dirty = true;
+                }
                 streaming_assistant = Some(streamed);
                 continue;
             }
 
             if let NormalizedEvent::AssistantText { text } = &event {
                 if let Some(mut streamed) = streaming_assistant.take() {
+                    stream_dirty = false;
                     streamed.text = Some(text.clone());
                     streamed.data = json!({ "streaming": false });
                     let _ =
@@ -1456,6 +1543,7 @@ impl AppCore {
             // Some provider failures can end a stream without a completed text
             // item. Preserve the accumulated text and remove its live caret.
             if matches!(event, NormalizedEvent::SessionEnded { .. }) {
+                stream_dirty = false;
                 if let Some(mut streamed) = streaming_assistant.take() {
                     streamed.data = json!({ "streaming": false });
                     let _ =
@@ -1768,7 +1856,15 @@ impl AppCore {
                 let _ = self
                     .apply_thread_handoff(&thread_id, &turn_id, agent, handoff_status)
                     .await;
+                break;
             }
+        }
+
+        // Providers may close the channel without a final message or SessionEnded.
+        if let Some(mut streamed) = streaming_assistant.take() {
+            streamed.data = json!({ "streaming": false });
+            let _ = am_db::repos::agent_thread_message::upsert(&self.db.pool, &streamed).await;
+            self.events.publish(AppEvent::AgentThreadEvent(streamed));
         }
 
         self.cancel_session_approvals(&turn_id).await;
@@ -2890,10 +2986,23 @@ impl AppCore {
     ) -> Result<(), CoreError> {
         let repos =
             am_db::repos::agent_thread_repo::list_for_thread(&self.db.pool, &thread.id).await?;
-        let block = render_thread_context(thread, &repos);
+        let mut block = render_thread_context(thread, &repos);
+        if let Some(message) =
+            am_db::repos::agent_thread_message::latest_user_message(&self.db.pool, &thread.id)
+                .await?
+        {
+            if let Some(text) = message.text {
+                push_section(
+                    &mut block,
+                    "Latest user request (continue this unless the current message supersedes it)",
+                    &text,
+                );
+            }
+        }
         if !self.is_visible_repo_path(&repos, workspace).await? {
             for file in [THREAD_CONTEXT_FILE, CLAUDE_FILE, AGENTS_FILE] {
-                write_text_if_changed(&workspace.join(file), &block).await?;
+                write_thread_context(&workspace.join(file), &block, file == THREAD_CONTEXT_FILE)
+                    .await?;
             }
         }
         for repo in repos {
@@ -2905,7 +3014,8 @@ impl AppCore {
                         .await?
                 {
                     for file in [CLAUDE_FILE, AGENTS_FILE] {
-                        write_text_if_changed(&path.join(file), &block).await?;
+                        write_thread_context(&path.join(file),
+                            "# Perpetual Session Context\n\nUse the session context supplied by the parent workspace instructions. The recovery copy is ../TASK_CONTEXT.md; read it only if that context is missing.\n", false).await?;
                     }
                 }
             }
@@ -3360,7 +3470,7 @@ fn build_thread_initial_prompt(
     }
     if context_files_available {
         prompt.push_str(
-            "\n\nBefore making changes, read TASK_CONTEXT.md and AGENTS.md in this workspace. Multiple repositories, if selected, are sibling directories under the current workspace root. These Perpetual context files are routine session setup, so there is no need to announce that you are checking them. Share any findings, blockers, or decisions from them when relevant to the user.",
+            "\n\nUse the session context already supplied in the workspace instructions. Multiple repositories, if selected, are sibling directories under the current workspace root. Answer conversational requests directly; inspect files and use tools only when the request requires it. Do not reread the Perpetual context files just to start a turn. Keep session restoration, account handoffs, and internal context filenames out of routine user-facing updates; continue the user’s request directly.",
         );
     } else {
         prompt.push_str(
@@ -3373,34 +3483,74 @@ fn build_thread_initial_prompt(
 fn build_thread_resume_prompt(thread: &AgentThread, context_files_available: bool) -> String {
     if context_files_available {
         format!(
-            "Continue the Perpetual session \"{}\". Read TASK_CONTEXT.md and AGENTS.md first, then proceed from the recorded progress and next actions. Checking these Perpetual context files is routine session setup; focus user-facing updates on relevant progress, findings, and blockers.",
+            "Continue the user’s existing task in session \"{}\" from the last successful progress supplied in the workspace instructions. Account/provider switches are internal continuity, not a new task. Do not announce a handoff, greeting, setup checks, or internal context filenames. Do not investigate prior provider errors unless the user asked for that. Continue outstanding work directly, and answer conversational requests without tool calls.",
             thread.title
         )
     } else {
         format!(
-            "Continue the Perpetual session \"{}\" in the current repository working tree, applying edits in place as you work.",
+            "Continue the user's existing task in session \"{}\" in the current repository working tree. Apply edits in place when requested. Resume silently from the last successful progress; account changes and provider failures are not new tasks to investigate.",
             thread.title
         )
     }
 }
 
 fn build_thread_followup_prompt(_thread: &AgentThread, message: &str) -> String {
-    message.to_string()
+    format!("{message}\n\n[Internal continuity guidance]\nContinue this request directly. Keep account/session restoration and internal context filenames out of routine updates. Prior provider failures are not new tasks to investigate unless the user asks. Answer conversational requests without setup tools.")
 }
 
-async fn write_text_if_changed(path: &Path, content: &str) -> Result<(), CoreError> {
-    match tokio::fs::read_to_string(path).await {
-        Ok(existing) if existing == content => return Ok(()),
-        Ok(_) => {}
-        Err(err) if err.kind() == ErrorKind::NotFound => {}
+/// Update only our context block in instruction files. Repository-authored
+/// instructions must survive every account switch and context refresh.
+fn merge_instruction_context(existing: &str, context: &str) -> String {
+    const START: &str = "<!-- Perpetual session context start -->";
+    const END: &str = "<!-- Perpetual session context end -->";
+    let context = context
+        .replace(START, "[session context start]")
+        .replace(END, "[session context end]");
+    let block = format!("{START}\n{}{END}\n", context.trim_end().to_string() + "\n");
+    if let Some(start) = existing.find(START) {
+        if let Some(end) = existing[start + START.len()..].find(END) {
+            let end = start + START.len() + end + END.len();
+            let remainder = existing[end..]
+                .strip_prefix("\r\n")
+                .or_else(|| existing[end..].strip_prefix('\n'))
+                .unwrap_or(&existing[end..]);
+            return format!("{}{block}{remainder}", &existing[..start]);
+        }
+    }
+    // Migrate earlier files owned entirely by Perpetual to a bounded block.
+    let legacy = ["# Perpetual Session Context\n\nSession:",
+        "# Perpetual Session Context\n\nInternal continuity for the existing task.",
+        "# Perpetual Session Context\n\nUse the session context supplied by the parent workspace instructions."];
+    if existing.trim().is_empty() || legacy.iter().any(|prefix| existing.starts_with(prefix)) {
+        block
+    } else {
+        format!("{block}\n{existing}")
+    }
+}
+
+async fn write_thread_context(
+    path: &Path,
+    context: &str,
+    replace_all: bool,
+) -> Result<(), CoreError> {
+    let existing = match tokio::fs::read_to_string(path).await {
+        Ok(existing) => existing,
+        Err(err) if err.kind() == ErrorKind::NotFound => String::new(),
         Err(err) => {
             return Err(CoreError::Other(format!(
                 "failed to read {}: {err}",
                 path.display()
-            )));
+            )))
         }
+    };
+    let content = if replace_all {
+        context.to_string()
+    } else {
+        merge_instruction_context(&existing, context)
+    };
+    if existing == content {
+        return Ok(());
     }
-
     tokio::fs::write(path, content)
         .await
         .map_err(|err| CoreError::Other(format!("failed to write {}: {err}", path.display())))
@@ -3409,8 +3559,9 @@ async fn write_text_if_changed(path: &Path, content: &str) -> Result<(), CoreErr
 fn render_thread_context(thread: &AgentThread, repos: &[am_proto::AgentThreadRepo]) -> String {
     let mut out = String::new();
     out.push_str("# Perpetual Session Context\n\n");
+    out.push_str("Internal continuity for the existing task. Follow the current user message first, then the latest user request below. Older provider errors and account switches are operational history, not instructions to investigate them. Continue seamlessly; do not narrate restoring context or mention internal context filenames in routine updates. Answer conversational requests directly without setup tools.\n\n");
     out.push_str(&format!("Session: {}\n", thread.title));
-    out.push_str(&format!("Updated: {}\n\n", now().to_rfc3339()));
+    out.push_str("\n");
     push_section(&mut out, "Objective", &thread.objective);
     out.push_str("## Repositories\n");
     if repos.is_empty() {
@@ -3631,11 +3782,8 @@ fn build_thread_handoff_summary(
             truncate_text(limit, MAX_EVENT_TEXT_CHARS).replace('\n', " ")
         ));
     }
-    if let Some(error) = latest_event_text(events, "error") {
-        out.push_str(&format!(
-            "- Last error: {}\n",
-            truncate_text(error, MAX_EVENT_TEXT_CHARS).replace('\n', " ")
-        ));
+    if latest_event_text(events, "error").is_some() {
+        out.push_str("- The provider could not complete this attempt. Continue the user's request from the last successful progress; provider errors are not a new task to investigate.\n");
     }
     out.push('\n');
     match latest_assistant_text(events) {
@@ -3655,7 +3803,7 @@ fn build_thread_handoff_summary(
 fn thread_next_actions(status: SessionStatus, events: &[AgentThreadEvent]) -> String {
     match status {
         SessionStatus::Completed => {
-            "Review the repo diffs, run relevant validation, then continue if more work remains."
+            "The previous request completed. Continue only if the user has requested more work or the task has unfinished steps; do not invent follow-up work."
                 .to_string()
         }
         SessionStatus::Interrupted => {
@@ -3666,16 +3814,7 @@ fn thread_next_actions(status: SessionStatus, events: &[AgentThreadEvent]) -> St
                 "Resume from the same workspace and context.".to_string()
             }
         }
-        SessionStatus::Failed => latest_event_text(events, "error")
-            .map(|err| {
-                format!(
-                    "Investigate the last failure ({}), then resume from this workspace.",
-                    truncate_text(err, 300).replace('\n', " ")
-                )
-            })
-            .unwrap_or_else(|| {
-                "Inspect the failed turn, fix the blocker, then resume.".to_string()
-            }),
+        SessionStatus::Failed => "Continue the user's original request from the last successful progress after the provider issue is resolved. Do not turn the provider failure into a new task.".to_string(),
     }
 }
 
@@ -3822,7 +3961,8 @@ mod tests {
     #[test]
     fn ordinary_initial_prompt_keeps_context_reminder() {
         let prompt = build_thread_initial_prompt(&test_thread(), "fix auth", true);
-        assert!(prompt.starts_with("fix auth\n\nBefore making changes"));
+        assert!(prompt.starts_with("fix auth\n\nUse the session context"));
+        assert!(!prompt.contains("read TASK_CONTEXT.md and AGENTS.md"));
     }
 
     #[test]
@@ -3918,5 +4058,371 @@ mod tests {
             ..local
         };
         assert!(!local_model_uses_container_localhost(&local));
+    }
+    #[test]
+    fn context_is_stable_without_changes() {
+        let thread = test_thread();
+        assert_eq!(
+            render_thread_context(&thread, &[]),
+            render_thread_context(&thread, &[])
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_bursts_are_coalesced_and_final_text_survives_channel_close() {
+        let core = crate::test_core().await;
+        let thread = core
+            .create_agent_thread(NewAgentThread {
+                title: "Streaming test".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let turn = am_db::repos::agent_turn::create(
+            &core.db.pool,
+            &thread.id,
+            AgentKind::Codex,
+            "read_only",
+            ExecutionBackend::Host,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ModelTargetKind::default(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let (tx, rx) = tokio::sync::mpsc::channel(2048);
+        for _ in 0..1000 {
+            tx.send(NormalizedEvent::AssistantTextDelta { delta: "x".into() })
+                .await
+                .unwrap();
+        }
+        drop(tx);
+        let since = core.events.latest_seq();
+        let started = std::time::Instant::now();
+        let permit = core.sessions.try_acquire(None).unwrap();
+        core.consume_agent_thread_turn(
+            turn.id.clone(),
+            thread.id,
+            AgentKind::Codex,
+            rx,
+            permit,
+            None,
+            None,
+            None,
+        )
+        .await;
+        let replay = core.events.replay_since(since);
+        let snapshots: Vec<_> = replay
+            .events
+            .iter()
+            .filter_map(|event| match &event.event {
+                AppEvent::AgentThreadEvent(event) if event.role == "assistant" => Some(event),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(snapshots.first().unwrap().text.as_deref(), Some("x"));
+        assert_eq!(
+            snapshots.last().unwrap().text.as_deref(),
+            Some("x".repeat(1000).as_str())
+        );
+        assert_eq!(snapshots.last().unwrap().data["streaming"], false);
+        assert!(
+            snapshots.len() < 100,
+            "burst should not emit one snapshot per token"
+        );
+        let saved = am_db::repos::agent_thread_message::list_for_turn(&core.db.pool, &turn.id)
+            .await
+            .unwrap();
+        let saved_text = saved
+            .iter()
+            .find(|event| event.role == "assistant")
+            .unwrap();
+        assert_eq!(saved_text.text, snapshots.last().unwrap().text);
+        assert_eq!(saved_text.data["streaming"], false);
+        assert!(saved.iter().any(|event| event.kind == "error"));
+        assert_eq!(
+            am_db::repos::agent_turn::get(&core.db.pool, &turn.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .state,
+            SessionState::Failed
+        );
+        eprintln!(
+            "1000 deltas: {} IPC snapshots, {:?}",
+            snapshots.len(),
+            started.elapsed()
+        );
+    }
+    #[test]
+    fn failed_provider_turn_does_not_become_a_new_user_task() {
+        let error = map_thread_event(
+            "thread",
+            "turn",
+            &NormalizedEvent::Error {
+                message: "{\"error\":{\"message\":\"unsupported model\"}}".into(),
+                retryable: false,
+            },
+        );
+        let events = vec![error];
+        let summary = build_thread_handoff_summary(
+            AgentKind::Codex,
+            SessionStatus::Failed,
+            &events,
+            &AgentThreadDiff::default(),
+        );
+        assert!(!summary.contains("unsupported model"));
+        assert!(!summary.contains("Last error:"));
+        assert!(summary.contains("Continue the user's request"));
+        let actions = thread_next_actions(SessionStatus::Failed, &events);
+        assert!(!actions.contains("Investigate the last failure"));
+        assert!(actions.contains("original request"));
+        let prompt = build_thread_resume_prompt(&test_thread(), true);
+        assert!(!prompt.contains("Read TASK_CONTEXT.md"));
+        assert!(prompt.contains("Do not announce a handoff"));
+        let followup = build_thread_followup_prompt(&test_thread(), "Keep going");
+        assert!(followup.starts_with("Keep going\n\n"));
+        assert!(followup.contains("Continue this request directly"));
+    }
+
+    #[tokio::test]
+    async fn account_switch_context_preserves_the_latest_user_request() {
+        let core = crate::test_core().await;
+        let thread = core
+            .create_agent_thread(NewAgentThread {
+                title: "Continuity test".into(),
+                objective: Some("Original request".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let turn = am_db::repos::agent_turn::create(
+            &core.db.pool,
+            &thread.id,
+            AgentKind::Codex,
+            "read_only",
+            ExecutionBackend::Host,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ModelTargetKind::default(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            am_db::repos::agent_thread_message::latest_user_message(&core.db.pool, &thread.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        for text in ["Original request", "Continue fixing the search results"] {
+            let event = user_thread_event(&thread.id, &turn.id, text, None);
+            am_db::repos::agent_thread_message::insert(&core.db.pool, &event)
+                .await
+                .unwrap();
+        }
+        let error = map_thread_event(
+            &thread.id,
+            &turn.id,
+            &NormalizedEvent::Error {
+                message: "Unsupported model".into(),
+                retryable: false,
+            },
+        );
+        am_db::repos::agent_thread_message::insert(&core.db.pool, &error)
+            .await
+            .unwrap();
+        let latest =
+            am_db::repos::agent_thread_message::latest_user_message(&core.db.pool, &thread.id)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            latest.text.as_deref(),
+            Some("Continue fixing the search results")
+        );
+        assert!(am_db::repos::agent_thread_message::latest_user_message(
+            &core.db.pool,
+            "another-thread"
+        )
+        .await
+        .unwrap()
+        .is_none());
+    }
+    #[test]
+    fn repeated_handoffs_preserve_repository_instructions_without_accumulating_context() {
+        let original = "# Project rules\nRun the search tests before finishing.\n";
+        let first = merge_instruction_context(original, "First request\n");
+        let next = merge_instruction_context(&first, "Second request\n");
+        assert!(next.ends_with(original));
+        assert!(!next.contains("First request"));
+        assert_eq!(
+            next.matches("<!-- Perpetual session context start -->")
+                .count(),
+            1
+        );
+        assert_eq!(merge_instruction_context(&next, "Second request\n"), next);
+        let legacy = "# Perpetual Session Context\n\nSession: Old generated task\n";
+        assert!(!merge_instruction_context(legacy, "Current task").contains("Old generated task"));
+    }
+    #[tokio::test]
+    async fn racing_followup_waits_for_startup_then_queues_without_losing_identity() {
+        let core = crate::test_core().await;
+        let thread = core
+            .create_agent_thread(NewAgentThread {
+                title: "Race test".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let launch = core.sessions.lock_start(&thread.id).await;
+        let worker = {
+            let core = core.clone();
+            let id = thread.id.clone();
+            tokio::spawn(async move {
+                core.run_agent_thread_with_client_message(
+                    &id,
+                    AgentKind::Codex,
+                    PermissionPolicy::ReadOnly,
+                    Some("Then check the tests".into()),
+                    None,
+                    Some("followup-id".into()),
+                )
+                .await
+            })
+        };
+        tokio::task::yield_now().await;
+        assert!(!worker.is_finished());
+        let (cancel, _cancel_rx) = tokio::sync::oneshot::channel();
+        core.sessions
+            .register(&thread.id, am_agents::SessionControl::new(cancel))
+            .await;
+        drop(launch);
+        let accepted = tokio::time::timeout(std::time::Duration::from_secs(2), worker)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let queued = core.list_queued_turns(&thread.id).await.unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].id, accepted);
+        assert_eq!(queued[0].message, "Then check the tests");
+        assert_eq!(queued[0].client_message_id.as_deref(), Some("followup-id"));
+        core.sessions.remove(&thread.id).await;
+    }
+
+    #[tokio::test]
+    async fn terminal_events_release_capacity_even_if_the_adapter_keeps_its_channel_open() {
+        for (status, expected) in [
+            (SessionStatus::Completed, TaskStatus::Review),
+            (SessionStatus::Interrupted, TaskStatus::Paused),
+        ] {
+            let core = crate::test_core().await;
+            let thread = core
+                .create_agent_thread(NewAgentThread {
+                    title: "Terminal test".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            let turn = am_db::repos::agent_turn::create(
+                &core.db.pool,
+                &thread.id,
+                AgentKind::Codex,
+                "read_only",
+                ExecutionBackend::Host,
+                None,
+                None,
+                None,
+                None,
+                None,
+                ModelTargetKind::default(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tx.send(NormalizedEvent::AssistantTextDelta {
+                delta: "Partial text".into(),
+            })
+            .await
+            .unwrap();
+            tx.send(NormalizedEvent::AssistantTextDelta {
+                delta: " that grows".into(),
+            })
+            .await
+            .unwrap();
+            if status == SessionStatus::Completed {
+                tx.send(NormalizedEvent::AssistantText {
+                    text: "Corrected final".into(),
+                })
+                .await
+                .unwrap();
+            }
+            tx.send(NormalizedEvent::SessionEnded { status })
+                .await
+                .unwrap();
+            let permit = core.sessions.try_acquire(None).unwrap();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                core.consume_agent_thread_turn(
+                    turn.id.clone(),
+                    thread.id.clone(),
+                    AgentKind::Codex,
+                    rx,
+                    permit,
+                    None,
+                    None,
+                    None,
+                ),
+            )
+            .await
+            .expect("completion cannot wait for sender drop");
+            assert!(tx.is_closed());
+            let saved = am_db::repos::agent_thread_message::list_for_turn(&core.db.pool, &turn.id)
+                .await
+                .unwrap();
+            let text = saved
+                .iter()
+                .find(|event| event.role == "assistant")
+                .unwrap();
+            assert_eq!(text.data["streaming"], false);
+            assert_eq!(
+                text.text.as_deref(),
+                Some(if status == SessionStatus::Completed {
+                    "Corrected final"
+                } else {
+                    "Partial text that grows"
+                })
+            );
+            let saved_thread = am_db::repos::agent_thread::get(&core.db.pool, &thread.id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(saved_thread.status, expected);
+            assert!(core.sessions.try_acquire(None).is_ok());
+        }
     }
 }
