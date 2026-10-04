@@ -122,10 +122,61 @@ export const STATUS: Record<TaskStatus, { label: string; tone: Tone; live?: bool
 export const statusInfo = (status: TaskStatus) =>
   STATUS[status] ?? { label: status.replaceAll('_', ' '), tone: 'neutral' as Tone };
 
-/** Engine errors arrive as `Error: ...` strings; keep only the sentence. */
-export function errorMessage(error: unknown) {
-  const text = error instanceof Error ? error.message : String(error);
-  return text.replace(/^(Error|Other|CoreError|Server):\s*/i, '').trim() || 'Something went wrong.';
+/** Translate provider envelopes into useful messages at every UI boundary. */
+export function errorMessage(error: unknown): string {
+  let value: unknown = error instanceof Error ? error.message : error;
+  for (let depth = 0; depth < 6; depth++) {
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      value = record.error ?? record.message ?? record.detail;
+      continue;
+    }
+    if (typeof value !== 'string') break;
+    const text = value.replace(/^(?:(?:Error|Other|CoreError|Server):\s*)+/i, '').trim();
+    // Some transports prefix the JSON body with an HTTP status or explanation.
+    const body = text.slice(text.indexOf('{'));
+    try {
+      value = JSON.parse(text);
+      continue;
+    } catch {
+      /* Not a standalone envelope. */
+    }
+    if (text.includes('{')) {
+      try {
+        value = JSON.parse(body);
+        continue;
+      } catch {
+        /* Plain text. */
+      }
+    }
+    if (
+      /model[\s\S]*(?:not supported|not available|does not exist|do not have access|don't have access)/i.test(
+        text,
+      )
+    ) {
+      const model = /['"]([^'"\s]+)['"]\s+model/i.exec(text)?.[1];
+      return `${model || 'This model'} isn’t available with the selected account. Choose a supported model from the model menu, then send your message again.`;
+    }
+    if (
+      /unauthorized|unauthenticated|invalid[ _-]*(?:api[ _-]*)?key|authentication[_ ]error|not (?:logged|signed) in/i.test(
+        text,
+      )
+    ) {
+      return 'This account needs to sign in again. Open Accounts to reconnect it, then try again.';
+    }
+    if (/rate[_ -]?limit|too many requests|quota exceeded/i.test(text)) {
+      return 'This account has reached its usage limit. Switch accounts or try again after the limit resets.';
+    }
+    if (/overloaded|service unavailable|internal server error/i.test(text)) {
+      return 'The provider is temporarily unavailable. Please try again shortly.';
+    }
+    if (/timed? out|timeout/i.test(text)) {
+      return 'The provider took too long to respond. Please try again.';
+    }
+    if (text.startsWith('{') || text.startsWith('[')) break;
+    return text || 'Something went wrong. Please try again.';
+  }
+  return 'The provider couldn’t complete this request. Please try again.';
 }
 
 /** The command a tool ran, without the shell that wrapped it (`powershell -Command '…'`). */

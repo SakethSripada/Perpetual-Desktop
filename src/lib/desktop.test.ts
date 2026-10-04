@@ -3,7 +3,7 @@ import { commandPrompt, parseCommand } from './commands';
 import { questionsFromEvent, formatQuestionAnswers } from './userQuestions';
 import { buildTranscriptItems } from './transcript';
 import { toolRun } from '../components/ai';
-import { accountDetail, accountName, accountState, shellCommand } from './format';
+import { accountDetail, accountName, accountState, shellCommand, errorMessage } from './format';
 import type { AgentThreadEvent, ProviderAccountStatus } from './types';
 const event = (patch: Partial<AgentThreadEvent>): AgentThreadEvent => ({
   id: 'e1',
@@ -200,5 +200,35 @@ describe('tool runs', () => {
       ['ls', false, 'a.txt'],
       ['rg x', true, 'rg: not found'],
     ]);
+  });
+});
+
+describe('user-facing provider errors', () => {
+  const unsupported = {
+    type: 'error',
+    status: 400,
+    error: {
+      type: 'invalid_request_error',
+      message: "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.",
+    },
+  };
+  it('turns unsupported models into an actionable account-specific message', () => {
+    for (const value of [
+      unsupported,
+      JSON.stringify(unsupported),
+      new Error('Error: ' + JSON.stringify(unsupported)),
+      'HTTP 400: ' + JSON.stringify(unsupported),
+    ]) {
+      expect(errorMessage(value)).toBe(
+        'gpt-6.1-sol isn’t available with the selected account. Choose a supported model from the model menu, then send your message again.',
+      );
+    }
+  });
+  it('handles other provider failures without exposing envelopes', () => {
+    expect(errorMessage({ error: { message: 'authentication_error' } })).toContain('Open Accounts');
+    expect(errorMessage({ error: { message: 'rate_limit_exceeded' } })).toContain('usage limit');
+    expect(errorMessage({ status: 500 })).not.toContain('[object Object]');
+    expect(errorMessage('{broken json')).not.toContain('{');
+    expect(errorMessage('Error: Repository is unavailable')).toBe('Repository is unavailable');
   });
 });

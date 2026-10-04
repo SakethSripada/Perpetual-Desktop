@@ -755,7 +755,7 @@ function EventMessage({
     return (
       <div className="my-4 flex items-start gap-2.5 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-[13px]">
         <CircleAlert size={15} className="mt-0.5 shrink-0 text-danger" />
-        <div className="min-w-0 break-words selectable">{event.text}</div>
+        <div className="min-w-0 break-words selectable">{errorMessage(event.text)}</div>
       </div>
     );
   // Older versions saved a canned greeting as an assistant message. It was
