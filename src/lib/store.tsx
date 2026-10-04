@@ -10,6 +10,7 @@ import {
 import { toast } from 'sonner';
 import { native, rpc, subscribe, signIn as launchSignIn } from './api';
 import { accountName, agentName, errorMessage } from './format';
+import { mergeSnapshot } from './streaming';
 import type {
   AgentThread,
   AgentThreadEvent,
@@ -104,6 +105,7 @@ interface Store extends Snapshot {
   /** Arrange tasks in this order (first = top), updating the list right away. */
   reorderThreads: (orderedIds: string[]) => Promise<void>;
   onThreadEvent: (listener: EventListener) => () => void;
+  upsertThread: (thread: AgentThread) => void;
 }
 const Context = createContext<Store>(null!);
 
@@ -171,42 +173,63 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const inFlight = useRef<Promise<void> | null>(null);
+  const refreshAgain = useRef(false);
+  const threadUpdates = useRef(new Map<string, AgentThread>());
   const detectionId = useRef(0);
+  const detectionFlight = useRef<Promise<void> | null>(null);
+  const catalogCheckedAt = useRef(0);
   const listeners = useRef(new Set<EventListener>());
   const policyRef = useRef<LimitPolicy | null>(null);
   policyRef.current = state.policy;
 
   const refresh = useCallback(() => {
     if (!native) return Promise.resolve();
-    if (inFlight.current) return inFlight.current;
+    if (inFlight.current) {
+      refreshAgain.current = true;
+      return inFlight.current;
+    }
     const run = async () => {
       try {
-        const project = await rpc<Project>('ensure_workbench_project');
-        const [threads, repos, policy, accounts, approvals] = await Promise.all([
-          rpc<AgentThread[]>('list_agent_threads', { project_id: null }),
-          rpc<Repo[]>('list_repos', { project_id: project.id }),
-          rpc<LimitPolicy>('get_limit_policy'),
-          rpc<ProviderAccountStatus[]>('provider_account_statuses'),
-          rpc<ApprovalRequest[]>('list_pending_approvals'),
-        ]);
-        // Account statuses may register a CLI sign-in, which updates the policy.
-        const latest =
-          accounts.length !== (policy.accounts?.length ?? 0)
-            ? await rpc<LimitPolicy>('get_limit_policy')
-            : policy;
-        setState((old) => ({
-          ...old,
-          project,
-          threads,
-          repos,
-          policy: latest,
-          accounts,
-          approvals,
-        }));
-        setError(null);
-        setRevision((v) => v + 1);
-      } catch (err) {
-        setError(errorMessage(err));
+        do {
+          refreshAgain.current = false;
+          threadUpdates.current.clear();
+          try {
+            // Start external sign-in probes concurrently, but publish the fast
+            // local snapshot without waiting for them.
+            const accountRequest = rpc<ProviderAccountStatus[]>('provider_account_statuses')
+              .then((accounts) => ({ accounts, error: null }))
+              .catch((error: unknown) => ({ accounts: null, error }));
+            const project = await rpc<Project>('ensure_workbench_project');
+            const [threads, repos, policy, approvals] = await Promise.all([
+              rpc<AgentThread[]>('list_agent_threads', { project_id: null }),
+              rpc<Repo[]>('list_repos', { project_id: project.id }),
+              rpc<LimitPolicy>('get_limit_policy'),
+              rpc<ApprovalRequest[]>('list_pending_approvals'),
+            ]);
+            const mergedThreads = mergeSnapshot(threads, [...threadUpdates.current.values()]);
+            setState((old) => ({
+              ...old,
+              project,
+              threads: mergedThreads,
+              repos,
+              policy,
+              approvals,
+            }));
+            setLoading(false);
+            setError(null);
+            setRevision((v) => v + 1);
+            const result = await accountRequest;
+            if (!result.accounts) throw result.error;
+            const accounts = result.accounts;
+            const latest =
+              accounts.length !== (policy.accounts?.length ?? 0)
+                ? await rpc<LimitPolicy>('get_limit_policy')
+                : policy;
+            setState((old) => ({ ...old, accounts, policy: latest }));
+          } catch (err) {
+            setError(errorMessage(err));
+          }
+        } while (refreshAgain.current);
       } finally {
         setLoading(false);
         inFlight.current = null;
@@ -216,35 +239,55 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return inFlight.current;
   }, []);
 
-  const detect = useCallback(async () => {
-    if (!native) return;
-    const id = ++detectionId.current;
-    const [agents, models] = await Promise.all([
-      rpc<AgentStatus[]>('detect_agents'),
-      rpc<AgentModelCatalog[]>('agent_model_catalog'),
-    ]);
-    if (id !== detectionId.current) return;
-    setState((old) => ({
-      ...old,
-      agents,
-      models: models.map((incoming) => {
-        const previous = old.models.find((catalog) => catalog.agent === incoming.agent);
-        if (
-          !previous ||
-          previous.binary_path !== incoming.binary_path ||
-          previous.version !== incoming.version
-        ) {
-          return incoming;
-        }
-        const ids = new Set(incoming.models.map((model) => model.id));
-        return {
-          ...incoming,
-          models: [...incoming.models, ...previous.models.filter((model) => !ids.has(model.id))],
-        };
-      }),
-    }));
-    await refresh();
-  }, [refresh]);
+  const detect = useCallback(
+    (forceModels = true) => {
+      if (!native) return Promise.resolve();
+      if (detectionFlight.current) return detectionFlight.current;
+      const run = async () => {
+        const id = ++detectionId.current;
+        const [agents, models] = await Promise.all([
+          rpc<AgentStatus[]>('detect_agents'),
+          forceModels || Date.now() - catalogCheckedAt.current > 60_000
+            ? rpc<AgentModelCatalog[]>('agent_model_catalog').then((models) => {
+                catalogCheckedAt.current = Date.now();
+                return models;
+              })
+            : Promise.resolve(null),
+        ]);
+        if (id !== detectionId.current) return;
+        setState((old) => ({
+          ...old,
+          agents,
+          models: models
+            ? models.map((incoming) => {
+                const previous = old.models.find((catalog) => catalog.agent === incoming.agent);
+                if (
+                  !previous ||
+                  previous.binary_path !== incoming.binary_path ||
+                  previous.version !== incoming.version
+                ) {
+                  return incoming;
+                }
+                const ids = new Set(incoming.models.map((model) => model.id));
+                return {
+                  ...incoming,
+                  models: [
+                    ...incoming.models,
+                    ...previous.models.filter((model) => !ids.has(model.id)),
+                  ],
+                };
+              })
+            : old.models,
+        }));
+        await refresh();
+      };
+      detectionFlight.current = run().finally(() => {
+        detectionFlight.current = null;
+      });
+      return detectionFlight.current;
+    },
+    [refresh],
+  );
 
   const activate = useCallback(
     async (account: ProviderAccountStatus) => {
@@ -321,6 +364,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [refresh],
   );
 
+  const upsertThread = useCallback((thread: AgentThread) => {
+    threadUpdates.current.set(thread.id, thread);
+    setState((old) => ({
+      ...old,
+      threads: old.threads.some((t) => t.id === thread.id)
+        ? old.threads.map((t) => (t.id === thread.id ? thread : t))
+        : [thread, ...old.threads],
+    }));
+  }, []);
+
   const onThreadEvent = useCallback((listener: EventListener) => {
     listeners.current.add(listener);
     return () => void listeners.current.delete(listener);
@@ -342,12 +395,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       if (event.type === 'agent_thread_updated' || event.type === 'agent_thread_created') {
         const thread = event.data as AgentThread;
-        setState((old) => ({
-          ...old,
-          threads: old.threads.some((t) => t.id === thread.id)
-            ? old.threads.map((t) => (t.id === thread.id ? thread : t))
-            : [thread, ...old.threads],
-        }));
+        upsertThread(thread);
       }
       if (event.type === 'provider_usage_updated') {
         const usage = event.data as { agent: AgentKind; usage: ProviderUsage };
@@ -357,6 +405,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             agent.kind === usage.agent ? { ...agent, usage: usage.usage } : agent,
           ),
         }));
+        return;
       }
       if (
         event.type === 'approval_requested' ||
@@ -377,7 +426,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const onFocus = () => {
       if (Date.now() - lastFocus < 3000) return;
       lastFocus = Date.now();
-      void detect().catch(() => undefined);
+      void detect(false).catch(() => undefined);
     };
     window.addEventListener('focus', onFocus);
     const interval = setInterval(() => void refresh(), 15000);
@@ -387,7 +436,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('focus', onFocus);
       void sub.then((off) => off());
     };
-  }, [refresh, detect]);
+  }, [refresh, detect, upsertThread]);
 
   return (
     <Context.Provider
@@ -407,6 +456,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         savePolicy,
         reorderThreads,
         onThreadEvent,
+        upsertThread,
       }}
     >
       {children}

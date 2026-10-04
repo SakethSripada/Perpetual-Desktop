@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   GitCompare,
   Cloud,
@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { streamingCaret } from '../lib/streamingCaret';
+import { mergeThreadEvents } from '../lib/streaming';
 import { toast } from 'sonner';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Queue } from './Queue';
@@ -95,33 +97,57 @@ export function Conversation({
     setReview(true);
     onReviewOpened?.();
   }, [openReview]);
-  const bottom = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const received = useRef(new Map<string, AgentThreadEvent>());
+
+  useEffect(() => {
+    received.current.clear();
+    setEvents([]);
+    setLoaded(false);
+    stick.current = true;
+  }, [thread?.id]);
 
   useEffect(() => {
     if (!thread) return;
     let live = true;
-    Promise.all([
-      rpc<AgentThreadEvent[]>('list_thread_events', { thread_id: thread.id }),
+    // Render history as soon as it arrives. Account/activity/turn metadata must
+    // not hold the conversation behind a slower request.
+    void rpc<AgentThreadEvent[]>('list_thread_events', { thread_id: thread.id })
+      .then((history) => {
+        if (!live) return;
+        setEvents(mergeThreadEvents(history, [...received.current.values()]));
+        for (const event of history) {
+          const update = received.current.get(event.id);
+          if (
+            update &&
+            update.text === event.text &&
+            JSON.stringify(update.data) === JSON.stringify(event.data)
+          ) {
+            received.current.delete(event.id);
+          }
+        }
+        setLoaded(true);
+      })
+      .catch((err) => live && toast.error(errorMessage(err)));
+    void Promise.all([
       rpc<QueuedTurn[]>('list_queued_turns', { thread_id: thread.id }),
       rpc<CloudRun[]>('list_cloud_runs', { thread_id: thread.id }),
       rpc<ActivityEvent[]>('list_activity', { project_id: thread.project_id, limit: 200 }),
       rpc<AgentTurn[]>('list_thread_turns', { thread_id: thread.id }),
     ])
-      .then(([e, q, c, a, turns]) => {
+      .then(([q, c, a, turns]) => {
         if (!live) return;
-        setEvents(e);
         setTurnAgents(Object.fromEntries(turns.map((turn) => [turn.id, turn.agent_kind])));
         setQueued(q);
         setCloudRuns(c);
         setActivities(
           a.filter(
             (event) =>
-              event.task_id === thread.id || JSON.stringify(event.payload).includes(thread.id),
+              event.task_id === thread.id ||
+              (event.payload as { thread_id?: string } | null)?.thread_id === thread.id,
           ),
         );
-        setLoaded(true);
       })
       .catch((err) => live && toast.error(errorMessage(err)));
     return () => {
@@ -132,21 +158,31 @@ export function Conversation({
   // Stream new and growing messages in as they happen.
   useEffect(() => {
     if (!thread) return;
-    return store.onThreadEvent((event) => {
+    let frame: number | undefined;
+    const pending = new Map<string, AgentThreadEvent>();
+    const off = store.onThreadEvent((event) => {
       if (event.thread_id !== thread.id) return;
-      setEvents((old) => {
-        const index = old.findIndex((e) => e.id === event.id);
-        if (index < 0) return [...old, event];
-        const next = [...old];
-        next[index] = event;
-        return next;
+      received.current.set(event.id, event);
+      pending.set(event.id, event);
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        const updates = [...pending.values()];
+        pending.clear();
+        setEvents((old) => mergeThreadEvents(old, updates));
       });
     });
+    return () => {
+      off();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
   }, [thread?.id, store.onThreadEvent]);
 
-  useEffect(() => {
-    if (stick.current) bottom.current?.scrollIntoView({ block: 'end' });
-  }, [events, queued, activities, store.approvals]);
+  useLayoutEffect(() => {
+    // Follow growth before paint without scrolling the surrounding application.
+    const element = scroller.current;
+    if (stick.current && element) element.scrollTop = element.scrollHeight;
+  }, [events, queued, activities, store.approvals, thread?.status]);
 
   const send = async (message: string, options: RunOptions) => {
     setBusy(true);
@@ -162,6 +198,7 @@ export function Conversation({
           preferred_agent: options.agent,
           force_managed_workspace: true,
         });
+        store.upsertThread(current);
       } else {
         await rpc('update_agent_thread', {
           id: current.id,
@@ -185,8 +222,9 @@ export function Conversation({
           client_message_id: crypto.randomUUID(),
         });
       } finally {
-        await store.refresh();
         if (!thread) onSelect(current.id);
+        // Account probes and sidebar refreshes must not delay showing the reply.
+        void store.refresh();
       }
       return true;
     } catch (error) {
@@ -324,7 +362,6 @@ export function Conversation({
               </p>
             )}
             {running && items.length > 0 && <Working thread={thread} since={runStart} />}
-            <div ref={bottom} />
           </div>
         </div>
         <div className="mx-auto w-full max-w-[808px] shrink-0 px-6 pt-2 pb-4">
@@ -761,13 +798,32 @@ function EventMessage({
         {agentName(agent)}
         {!streaming && <span className="ml-1">{actions}</span>}
       </div>
-      <div className="prose-chat">
-        <Markdown remarkPlugins={[remarkGfm]}>{event.text || ''}</Markdown>
-        {streaming && <span className="stream-caret" />}
-      </div>
+      <MessageBody text={event.text} streaming={streaming} />
     </article>
   );
 }
+
+// Older Markdown does not need to be parsed again for every incoming token.
+const MARKDOWN_PLUGINS = [remarkGfm];
+const STREAMING_PLUGINS = [streamingCaret];
+const MessageBody = memo(function MessageBody({
+  text,
+  streaming,
+}: {
+  text: string;
+  streaming: boolean;
+}) {
+  return (
+    <div className="prose-chat">
+      <Markdown
+        remarkPlugins={MARKDOWN_PLUGINS}
+        rehypePlugins={streaming ? STREAMING_PLUGINS : undefined}
+      >
+        {text}
+      </Markdown>
+    </div>
+  );
+});
 
 function MessageAction({
   label,
