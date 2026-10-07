@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { DIRECT_RELEASE, REPO, detectPlatform, type Platform } from '../lib/site';
+import { REPO, detectPlatform, type Platform } from '../lib/site';
+import type { Release } from '../lib/release';
 import { fileMatchesSha256 } from '../lib/checksum';
 import { AppleLogo, WindowsLogo } from './Mark';
 
@@ -7,11 +8,11 @@ export type DownloadPlatform = Exclude<Platform, 'other'>;
 
 type DownloadFlow = {
   platform: Platform;
-  showInstructions: (platform: DownloadPlatform) => void;
+  showInstructions: (platform: DownloadPlatform, release: Release) => void;
 };
 
 const DownloadContext = createContext<DownloadFlow | null>(null);
-const CLONE_COMMAND = `git clone ${REPO}.git`;
+const CLONE_COMMAND = `git clone --branch dev ${REPO}.git`;
 type Verification = {
   status: 'idle' | 'checking' | 'matched' | 'mismatch' | 'error';
   name?: string;
@@ -25,25 +26,45 @@ export function useDownloadFlow(): DownloadFlow {
 
 export function DownloadProvider({ children }: { children: ReactNode }) {
   const [platform] = useState<Platform>(detectPlatform);
-  const [instructionsFor, setInstructionsFor] = useState<DownloadPlatform | null>(null);
+  const [instructionsFor, setInstructionsFor] = useState<{
+    platform: DownloadPlatform;
+    release: Release;
+  } | null>(null);
 
   return (
-    <DownloadContext.Provider value={{ platform, showInstructions: setInstructionsFor }}>
+    <DownloadContext.Provider
+      value={{
+        platform,
+        showInstructions: (platform, release) => setInstructionsFor({ platform, release }),
+      }}
+    >
       {children}
       {instructionsFor && (
-        <InstallDialog platform={instructionsFor} onClose={() => setInstructionsFor(null)} />
+        <InstallDialog
+          platform={instructionsFor.platform}
+          release={instructionsFor.release}
+          onClose={() => setInstructionsFor(null)}
+        />
       )}
     </DownloadContext.Provider>
   );
 }
 
-function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onClose: () => void }) {
+function InstallDialog({
+  platform,
+  release,
+  onClose,
+}: {
+  platform: DownloadPlatform;
+  release: Release;
+  onClose: () => void;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
   const [checksumCopied, setChecksumCopied] = useState(false);
   const [verification, setVerification] = useState<Verification>({ status: 'idle' });
-  const asset = DIRECT_RELEASE[platform];
+  const asset = release.downloads[platform];
   const isWindows = platform === 'windows';
   const checksumCommand = isWindows
     ? `Get-FileHash .\\${asset.name} -Algorithm SHA256`
@@ -64,7 +85,7 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
   }
 
   async function verifyFile(file: File | undefined) {
-    if (!file) return;
+    if (!file || !asset.sha256) return;
     setVerification({ status: 'checking', name: file.name });
     try {
       setVerification({
@@ -103,7 +124,7 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
               id="install-dialog-title"
               className="mt-2 text-[24px] font-semibold tracking-tight text-sage"
             >
-              Download started
+              Install your download
             </h2>
             <p className="mt-1.5 text-[14px] leading-6 text-muted">
               When it finishes, open the downloaded file to install Perpetual.
@@ -156,6 +177,28 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
               </p>
             )}
           </section>
+          <section className="mt-4 rounded-xl border border-line p-4 text-[13px]">
+            <h3 className="font-medium text-sage">Set up your coding agent</h3>
+            <p className="mt-2">
+              Install{' '}
+              <a className="text-ink underline" href="https://git-scm.com/downloads">
+                Git
+              </a>{' '}
+              and either{' '}
+              <a className="text-ink underline" href="https://developers.openai.com/codex/cli">
+                Codex CLI
+              </a>{' '}
+              or{' '}
+              <a
+                className="text-ink underline"
+                href="https://docs.anthropic.com/en/docs/claude-code/setup"
+              >
+                Claude Code
+              </a>
+              . Restart Perpetual after installing them, then sign in from the app. Existing CLI
+              sign-ins are detected automatically.
+            </p>
+          </section>
           <p className="mt-4 text-[13px]">
             Download not starting?{' '}
             <a className="font-medium text-ink underline underline-offset-4" href={asset.url}>
@@ -182,8 +225,9 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
             </summary>
             <div className="mt-4 text-[13px] leading-5">
               <p>
-                Choose the installer you downloaded. Perpetual will check it in your browser; the
-                file is not uploaded.
+                {asset.sha256
+                  ? 'Choose the installer you downloaded to check it in your browser. The file is not uploaded.'
+                  : 'Browser verification is unavailable for this release. Use the manual command below and compare with the published checksums.'}
               </p>
               <input
                 ref={fileInput}
@@ -200,7 +244,7 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
               <button
                 type="button"
                 onClick={() => fileInput.current?.click()}
-                disabled={verification.status === 'checking'}
+                disabled={!asset.sha256 || verification.status === 'checking'}
                 className="mt-3 rounded-lg border border-line-strong px-3 py-2 text-[12px] font-medium text-ink transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"
               >
                 {verification.status === 'checking' ? 'Checking file…' : 'Choose downloaded file'}
@@ -226,10 +270,7 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
                 <p className="font-medium text-ink">Verify manually</p>
                 <p>
                   In your Downloads folder, run this command and compare the result with the{' '}
-                  <a
-                    className="text-ink underline underline-offset-4"
-                    href={DIRECT_RELEASE.checksums}
-                  >
+                  <a className="text-ink underline underline-offset-4" href={release.checksums.url}>
                     published checksums
                   </a>
                   .
@@ -248,7 +289,9 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
                   </button>
                 </div>
                 <p className="mt-2">Expected SHA-256</p>
-                <code className="block break-all text-[12px] text-ink">{asset.sha256}</code>
+                <code className="block break-all text-[12px] text-ink">
+                  {asset.sha256 ?? 'See the published checksum list'}
+                </code>
               </div>
             </div>
           </details>
@@ -257,7 +300,7 @@ function InstallDialog({ platform, onClose }: { platform: DownloadPlatform; onCl
               Prefer to build from source?{' '}
               <a
                 className="text-ink underline underline-offset-4"
-                href={`${REPO}#build-from-source`}
+                href={`${REPO}/blob/dev/README.md#build-from-source`}
               >
                 View the setup guide
               </a>

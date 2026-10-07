@@ -345,13 +345,26 @@ impl AppCore {
         &self,
         agent: AgentKind,
     ) -> Result<AccountSelection, CoreError> {
+        self.select_provider_account_for(agent, None).await
+    }
+
+    pub(crate) async fn select_provider_account_for(
+        &self,
+        agent: AgentKind,
+        required_id: Option<&str>,
+    ) -> Result<AccountSelection, CoreError> {
         let statuses: Vec<_> = self
             .provider_account_statuses_for(Some(agent))
             .await?
             .into_iter()
+            .filter(|s| required_id.is_none_or(|id| s.account.id == id))
             .collect();
         if statuses.is_empty() {
-            return Ok(AccountSelection::Unmanaged);
+            return Ok(if required_id.is_some() {
+                AccountSelection::SignedOut
+            } else {
+                AccountSelection::Unmanaged
+            });
         }
         let limited_resets: Vec<_> = statuses
             .iter()
@@ -478,11 +491,15 @@ impl AppCore {
     }
 
     /// Probes sign-in state for every account concurrently, reusing recent
-    /// results. Probes run on blocking threads because they spawn the CLI.
+    /// results. Each CLI probe has a deadline so a hung provider cannot stall
+    /// account refreshes or prevent a task from starting indefinitely.
     async fn probe_accounts(&self, accounts: &[ProviderAccount]) -> Vec<Probe> {
         let mut pending = Vec::with_capacity(accounts.len());
         for account in accounts {
-            let key = format!("{}:{:?}", account.id, account.auth_mode);
+            let key = format!(
+                "{:?}:{}:{:?}:{:?}",
+                self.data_dir, account.id, account.agent, account.auth_mode
+            );
             let cached = probe_cache().lock().ok().and_then(|cache| {
                 cache
                     .get(&key)
@@ -497,9 +514,11 @@ impl AppCore {
             let home = self.ensure_account_home(&account);
             pending.push(Ok((
                 key,
-                tokio::task::spawn_blocking(move || match home {
-                    Ok(home) => probe_provider_account(&account, home.as_deref()),
-                    Err(_) => failed_probe("Account storage is unavailable"),
+                tokio::spawn(async move {
+                    match home {
+                        Ok(home) => probe_provider_account(&account, home.as_deref()).await,
+                        Err(_) => failed_probe("Account storage is unavailable"),
+                    }
                 }),
             )));
         }
@@ -561,7 +580,8 @@ fn mark_active(statuses: &mut [ProviderAccountStatus]) {
         if seen.contains(&status.account.agent) {
             continue;
         }
-        if status.account.enabled
+        if status.installed
+            && status.account.enabled
             && status.authenticated
             && status.availability != AvailabilityState::Limited
         {
@@ -571,7 +591,7 @@ fn mark_active(statuses: &mut [ProviderAccountStatus]) {
     }
 }
 
-fn probe_provider_account(account: &ProviderAccount, home: Option<&Path>) -> Probe {
+async fn probe_provider_account(account: &ProviderAccount, home: Option<&Path>) -> Probe {
     if account.auth_mode == ProviderAccountAuthMode::OauthToken {
         let authenticated = account_token(account).ok().flatten().is_some();
         return Probe {
@@ -591,14 +611,28 @@ fn probe_provider_account(account: &ProviderAccount, home: Option<&Path>) -> Pro
             plan: None,
         };
     };
+    probe_cli_account(account, home, &binary).await
+}
+
+async fn probe_cli_account(account: &ProviderAccount, home: Option<&Path>, binary: &Path) -> Probe {
+    probe_cli_account_with_timeout(account, home, binary, Duration::from_secs(10)).await
+}
+
+async fn probe_cli_account_with_timeout(
+    account: &ProviderAccount,
+    home: Option<&Path>,
+    binary: &Path,
+    timeout: Duration,
+) -> Probe {
     let args: &[&str] = if account.agent == AgentKind::Codex {
         &["login", "status"]
     } else {
         &["auth", "status", "--json"]
     };
-    let mut command = Command::new(binary);
-    am_proto::hide_console(&mut command);
+    let mut command = tokio::process::Command::new(binary);
+    am_proto::hide_console(command.as_std_mut());
     command
+        .kill_on_drop(true)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -611,20 +645,9 @@ fn probe_provider_account(account: &ProviderAccount, home: Option<&Path>) -> Pro
             .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
             .or_else(|| user_home().map(|h| h.join(".codex")))
     };
-    if let Ok(output) = command.output() {
+    if let Ok(Ok(output)) = tokio::time::timeout(timeout, command.output()).await {
         if output.status.success() {
-            let text = format!(
-                "{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            )
-            .to_lowercase()
-            .replace(' ', "");
-            let ok = if account.agent == AgentKind::Codex {
-                text.contains("loggedin") && !text.contains("notloggedin")
-            } else {
-                text.contains("\"loggedin\":true") || text.contains("\"logged_in\":true")
-            };
+            let ok = login_status_authenticated(account.agent, &output.stdout, &output.stderr);
             let (email, plan) = if !ok {
                 (None, None)
             } else if account.agent == AgentKind::Codex {
@@ -643,19 +666,36 @@ fn probe_provider_account(account: &ProviderAccount, home: Option<&Path>) -> Pro
             };
         }
     }
-    let file = if account.agent == AgentKind::Codex {
-        codex_home().map(|h| h.join("auth.json"))
-    } else {
-        home.map(|h| h.join(".credentials.json"))
-            .or_else(|| user_home().map(|h| h.join(".claude").join(".credentials.json")))
-    };
-    let authenticated = file.is_some_and(|f| f.is_file());
+    // A credentials file can survive expiration, revocation, or a failed
+    // refresh. Only the provider's successful status check establishes login.
     Probe {
         installed: true,
-        authenticated,
-        detail: (!authenticated).then(|| "Not signed in".into()),
+        authenticated: false,
+        detail: Some("Could not verify sign-in. Sign in again or retry the account check.".into()),
         email: None,
         plan: None,
+    }
+}
+
+fn login_status_authenticated(agent: AgentKind, stdout: &[u8], stderr: &[u8]) -> bool {
+    if agent == AgentKind::Codex {
+        let text = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(stdout),
+            String::from_utf8_lossy(stderr)
+        )
+        .to_lowercase();
+        text.contains("logged in") && !text.contains("not logged in")
+    } else {
+        serde_json::from_slice::<serde_json::Value>(stdout)
+            .ok()
+            .and_then(|status| {
+                status
+                    .get("loggedIn")
+                    .or_else(|| status.get("logged_in"))
+                    .and_then(|v| v.as_bool())
+            })
+            == Some(true)
     }
 }
 
@@ -776,7 +816,8 @@ fn first_ready_status(
     statuses: impl Iterator<Item = ProviderAccountStatus>,
 ) -> Option<ProviderAccountStatus> {
     statuses.into_iter().find(|status| {
-        status.account.enabled
+        status.installed
+            && status.account.enabled
             && status.authenticated
             && status.availability != AvailabilityState::Limited
     })
@@ -919,6 +960,106 @@ fn consume_codex_reset_credit(env: &[(String, String)]) -> Result<bool, CoreErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_status_requires_structured_claude_boolean() {
+        for bytes in [
+            br#"{"loggedIn": true}"#.as_slice(),
+            b"{\n\"logged_in\":\ttrue\n}",
+        ] {
+            assert!(login_status_authenticated(
+                AgentKind::ClaudeCode,
+                bytes,
+                b""
+            ));
+        }
+        for bytes in [
+            br#"{"loggedIn": false}"#.as_slice(),
+            br#"{"error":"loggedIn: true"}"#,
+            b"not JSON",
+        ] {
+            assert!(!login_status_authenticated(
+                AgentKind::ClaudeCode,
+                bytes,
+                b""
+            ));
+        }
+        assert!(login_status_authenticated(
+            AgentKind::Codex,
+            b"",
+            b"Logged in using ChatGPT\n"
+        ));
+        assert!(!login_status_authenticated(
+            AgentKind::Codex,
+            b"",
+            b"Not logged in\n"
+        ));
+    }
+
+    #[tokio::test]
+    async fn failed_cli_check_never_trusts_stale_credentials_file() {
+        let root = std::env::temp_dir().join(format!("perpetual-auth-test-{}", am_proto::new_id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("auth.json"), "{}").unwrap();
+        std::fs::write(root.join(".credentials.json"), "{}").unwrap();
+        #[cfg(windows)]
+        let binary = {
+            let binary = root.join("signed-out.cmd");
+            std::fs::write(&binary, "@echo off\r\necho Not logged in\r\nexit /b 1\r\n").unwrap();
+            binary
+        };
+        #[cfg(not(windows))]
+        let binary = {
+            use std::os::unix::fs::PermissionsExt;
+            let binary = root.join("signed-out");
+            std::fs::write(&binary, "#!/bin/sh\necho 'Not logged in'\nexit 1\n").unwrap();
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+            binary
+        };
+        for agent in [AgentKind::Codex, AgentKind::ClaudeCode] {
+            let result = probe_cli_account(&account(agent), Some(&root), &binary).await;
+            assert!(result.installed);
+            assert!(!result.authenticated);
+            assert!(result.detail.is_some());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn hung_sign_in_check_returns_without_blocking_account_refresh() {
+        let root =
+            std::env::temp_dir().join(format!("perpetual-auth-timeout-{}", am_proto::new_id()));
+        std::fs::create_dir_all(&root).unwrap();
+        #[cfg(windows)]
+        let binary = {
+            let binary = root.join("hung.cmd");
+            std::fs::write(&binary, "@echo off\r\n:spin\r\ngoto spin\r\n").unwrap();
+            binary
+        };
+        #[cfg(not(windows))]
+        let binary = {
+            use std::os::unix::fs::PermissionsExt;
+            let binary = root.join("hung");
+            std::fs::write(&binary, "#!/bin/sh\nwhile :; do :; done\n").unwrap();
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+            binary
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            probe_cli_account_with_timeout(
+                &account(AgentKind::Codex),
+                Some(&root),
+                &binary,
+                Duration::from_millis(100),
+            ),
+        )
+        .await
+        .expect("probe must respect its deadline");
+        assert!(!result.authenticated);
+        // The async child is killed on cancellation; leave time for OS cleanup.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn identity_is_display_only_and_requires_a_signed_in_claude_status() {
         assert_eq!(
@@ -1085,6 +1226,10 @@ mod tests {
             disabled,
             signed_out,
             limited,
+            ProviderAccountStatus {
+                installed: false,
+                ..status("missing-cli", AgentKind::ClaudeCode)
+            },
             status("claude-ready", AgentKind::ClaudeCode),
         ];
         assert_eq!(

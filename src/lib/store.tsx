@@ -180,7 +180,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const catalogCheckedAt = useRef(0);
   const listeners = useRef(new Set<EventListener>());
   const policyRef = useRef<LimitPolicy | null>(null);
-  policyRef.current = state.policy;
+  const policyWrites = useRef(Promise.resolve());
+  const pendingPolicyWrites = useRef(0);
+  if (!pendingPolicyWrites.current) policyRef.current = state.policy;
 
   const refresh = useCallback(() => {
     if (!native) return Promise.resolve();
@@ -212,7 +214,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               project,
               threads: mergedThreads,
               repos,
-              policy,
+              policy: pendingPolicyWrites.current ? policyRef.current : policy,
               approvals,
             }));
             setLoading(false);
@@ -225,7 +227,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               accounts.length !== (policy.accounts?.length ?? 0)
                 ? await rpc<LimitPolicy>('get_limit_policy')
                 : policy;
-            setState((old) => ({ ...old, accounts, policy: latest }));
+            setState((old) => ({
+              ...old,
+              accounts,
+              policy: pendingPolicyWrites.current ? policyRef.current : latest,
+            }));
           } catch (err) {
             setError(errorMessage(err));
           }
@@ -334,13 +340,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const current = policyRef.current;
       if (!current) return;
       const next = { ...current, ...patch };
+      policyRef.current = next;
+      pendingPolicyWrites.current += 1;
       setState((old) => ({ ...old, policy: next }));
+      // Preserve consecutive toggles, including two changes before React's
+      // next render, and persist them in the same order they were made.
+      const write = policyWrites.current.then(() => rpc('set_limit_policy', next));
+      policyWrites.current = write.then(
+        () => undefined,
+        () => undefined,
+      );
       try {
-        await rpc('set_limit_policy', next);
+        await write;
       } catch (err) {
         toast.error(errorMessage(err));
       } finally {
-        await refresh();
+        pendingPolicyWrites.current -= 1;
+        if (!pendingPolicyWrites.current) await refresh();
       }
     },
     [refresh],

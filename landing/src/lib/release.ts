@@ -2,21 +2,11 @@ import { REPO, type Platform } from './site';
 
 type DownloadPlatform = Exclude<Platform, 'other'>;
 
-interface GitHubAsset {
-  name: string;
-  browser_download_url: string;
-  size: number;
-}
-
-interface GitHubRelease {
-  html_url: string;
-  assets: GitHubAsset[];
-}
-
 export interface ReleaseAsset {
   name: string;
   url: string;
   size: number;
+  sha256?: string;
 }
 
 export interface Release {
@@ -32,30 +22,50 @@ const API =
     ? 'https://api.github.com/repos/SakethSripada/Perpetual-Desktop/releases/latest'
     : `${import.meta.env.BASE_URL}release.json`;
 
-function validAsset(asset: GitHubAsset): boolean {
-  return (
-    typeof asset.name === 'string' &&
-    typeof asset.size === 'number' &&
-    asset.size > 0 &&
-    typeof asset.browser_download_url === 'string' &&
-    asset.browser_download_url.startsWith(`${REPO}/releases/download/`)
-  );
+function object(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : null;
 }
 
-function selectAsset(assets: GitHubAsset[], pattern: RegExp): ReleaseAsset | null {
-  const matches = assets.filter((asset) => validAsset(asset) && pattern.test(asset.name));
-  // An ambiguous release must not silently send someone the wrong installer.
-  if (matches.length !== 1) return null;
-  const { name, browser_download_url: url, size } = matches[0];
-  return { name, url, size };
+function selectAsset(assets: unknown[], pattern: RegExp, tag: string): ReleaseAsset | null {
+  const matches: ReleaseAsset[] = [];
+  for (const value of assets) {
+    const asset = object(value);
+    if (!asset || typeof asset.name !== 'string' || !pattern.test(asset.name)) continue;
+    if (
+      typeof asset.size !== 'number' ||
+      !Number.isFinite(asset.size) ||
+      asset.size <= 0 ||
+      typeof asset.browser_download_url !== 'string' ||
+      asset.browser_download_url !==
+        `${REPO}/releases/download/${tag}/${encodeURIComponent(asset.name)}`
+    )
+      return null;
+    const sha256 =
+      typeof asset.digest === 'string' && /^sha256:[a-f0-9]{64}$/i.test(asset.digest)
+        ? asset.digest.slice(7).toLowerCase()
+        : undefined;
+    matches.push({ name: asset.name, url: asset.browser_download_url, size: asset.size, sha256 });
+  }
+  return matches.length === 1 ? matches[0] : null;
 }
 
-export function parseRelease(release: GitHubRelease): Release | null {
-  if (!release.html_url?.startsWith(`${REPO}/releases/tag/`) || !Array.isArray(release.assets))
+export function parseRelease(value: unknown): Release | null {
+  const release = object(value);
+  if (
+    !release ||
+    typeof release.html_url !== 'string' ||
+    !Array.isArray(release.assets) ||
+    release.draft === true ||
+    release.prerelease === true
+  )
     return null;
-  const windows = selectAsset(release.assets, /x64-setup\.exe$/i);
-  const mac = selectAsset(release.assets, /universal\.dmg$/i);
-  const checksums = selectAsset(release.assets, /^SHA256SUMS\.txt$/);
+  const prefix = `${REPO}/releases/tag/`;
+  if (!release.html_url.startsWith(prefix)) return null;
+  const tag = release.html_url.slice(prefix.length);
+  if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(tag)) return null;
+  const windows = selectAsset(release.assets, /x64-setup\.exe$/i, tag);
+  const mac = selectAsset(release.assets, /universal\.dmg$/i, tag);
+  const checksums = selectAsset(release.assets, /^SHA256SUMS\.txt$/, tag);
   if (!windows || !mac || !checksums) return null;
   return { url: release.html_url, checksums, downloads: { windows, mac } };
 }
@@ -65,9 +75,13 @@ let releasePromise: Promise<Release | null> | null = null;
 /** A missing, private, or incomplete release is never presented as a download. */
 export function latestRelease(): Promise<Release | null> {
   if (!releasePromise) {
-    releasePromise = fetch(API, { headers: { Accept: 'application/vnd.github+json' } })
+    releasePromise = fetch(API, {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(10_000),
+      cache: 'no-cache',
+    })
       .then((response) => (response.ok ? response.json() : null))
-      .then((data: GitHubRelease | null) => (data ? parseRelease(data) : null))
+      .then((data: unknown) => (data ? parseRelease(data) : null))
       .catch(() => null);
   }
   return releasePromise;

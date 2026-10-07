@@ -49,8 +49,11 @@ jobs:
         run: |
           $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $package = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          if ("v$version" -ne $env:TAG -or $package -ne $version) {
-            throw "Tag $env:TAG, tauri.conf.json $version, and package.json $package must match."
+          $cargo = ((Get-Content src-tauri/Cargo.toml -Raw) -split '\[build-dependencies\]')[0]
+          $cargoVersion = [regex]::Match($cargo, '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
+
+          if ("v$version" -ne $env:TAG -or $package -ne $version -or $cargoVersion -ne $version) {
+            throw "Tag $env:TAG, tauri.conf.json $version, package.json $package, and src-tauri/Cargo.toml $cargoVersion must match."
           }
 
       - run: npm ci
@@ -212,6 +215,15 @@ jobs:
               [ "$MACOS_SIGNED" != "true" ] && echo "> The macOS app isn't notarized. After trying to open it, go to **System Settings → Privacy & Security → Open Anyway**. See [Apple's instructions](https://support.apple.com/en-us/102445)."
             fi
           } > notes.md
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
-            --title "Perpetual ${TAG#v}" --notes-file notes.md --generate-notes \
-            dist/*.exe dist/*.dmg dist/SHA256SUMS.txt
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft > existing.json 2>/dev/null; then
+            if [ "$(jq -r .isDraft existing.json)" != "true" ]; then
+              echo "::error::This tag is already published. Use a new version; published binaries and checksums are immutable."
+              exit 1
+            fi
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber dist/*.exe dist/*.dmg dist/SHA256SUMS.txt
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+              --title "Perpetual ${TAG#v}" --notes-file notes.md --generate-notes \
+              dist/*.exe dist/*.dmg dist/SHA256SUMS.txt
+          fi

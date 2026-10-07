@@ -12,11 +12,14 @@
     "url": "https://github.com/SakethSripada/Perpetual-Desktop/issues"
   },
   "engines": {
-    "node": ">=22"
+    "node": "^22.13.0 || ^24.0.0 || >=26.0.0"
   },
   "type": "module",
   "license": "MIT",
   "scripts": {
+    "start": "node scripts/setup.mjs --launch",
+    "setup": "node scripts/setup.mjs",
+    "doctor": "node scripts/setup.mjs --check",
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "desktop": "tauri dev",
@@ -50,10 +53,11 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "jsdom": "^29.1.1",
     "prettier": "^3.9.8",
     "tailwindcss": "^4.1.13",
     "typescript": "~5.9.2",
     "vite": "^7.1.0",
-    "vitest": "^3.2.4"
+    "vitest": "^5.0.3"
   }
 }

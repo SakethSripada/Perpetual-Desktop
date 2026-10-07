@@ -100,6 +100,7 @@ export function Conversation({
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const received = useRef(new Map<string, AgentThreadEvent>());
+  const pendingNewThread = useRef<AgentThread | undefined>(undefined);
 
   useEffect(() => {
     received.current.clear();
@@ -188,7 +189,7 @@ export function Conversation({
     setBusy(true);
     stick.current = true;
     try {
-      let current = thread;
+      let current = thread ?? pendingNewThread.current;
       if (!current) {
         current = await rpc<AgentThread>('create_agent_thread', {
           ...options,
@@ -199,6 +200,7 @@ export function Conversation({
           force_managed_workspace: true,
         });
         store.upsertThread(current);
+        pendingNewThread.current = current;
       } else {
         await rpc('update_agent_thread', {
           id: current.id,
@@ -221,8 +223,8 @@ export function Conversation({
           message,
           client_message_id: crypto.randomUUID(),
         });
-      } finally {
         if (!thread) onSelect(current.id);
+      } finally {
         // Account probes and sidebar refreshes must not delay showing the reply.
         void store.refresh();
       }

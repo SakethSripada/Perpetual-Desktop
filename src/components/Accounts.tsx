@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   Plus,
@@ -545,6 +545,7 @@ function AddAccount({
   const [label, setLabel] = useState('');
   const [mode, setMode] = useState<ProviderAccountAuthMode>('isolated_cli');
   const [busy, setBusy] = useState(false);
+  const adding = useRef(false);
   const installed =
     store.agents.find((a) => a.kind === agent)?.installed ??
     store.accounts.some((a) => a.agent === agent && a.installed);
@@ -556,7 +557,8 @@ function AddAccount({
   };
   const add = async () => {
     const policy = store.policy;
-    if (!policy) return;
+    if (!policy || adding.current) return;
+    adding.current = true;
     setBusy(true);
     const id = crypto.randomUUID();
     const authMode = agent === 'claude_code' ? mode : 'isolated_cli';
@@ -579,6 +581,7 @@ function AddAccount({
       return true;
     });
     setBusy(false);
+    adding.current = false;
     if (!ok) return;
     close();
     if (authMode === 'oauth_token') {
@@ -762,12 +765,14 @@ function TokenDialog({
   const store = useStore();
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
+  const saving = useRef(false);
   const close = () => {
     setToken('');
     onClose();
   };
   const save = async () => {
-    if (!account || !token.trim()) return;
+    if (!account || !token.trim() || saving.current) return;
+    saving.current = true;
     setBusy(true);
     const ok = await action(async () => {
       await rpc('set_provider_account_token', { account_id: account.id, token: token.trim() });
@@ -775,6 +780,7 @@ function TokenDialog({
       return true;
     }, 'Signed in');
     setBusy(false);
+    saving.current = false;
     if (ok) close();
   };
   return (

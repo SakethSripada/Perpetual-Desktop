@@ -1,12 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef } from 'react';
 import { motion, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react';
-import {
-  DIRECT_GITHUB_DOWNLOADS,
-  DIRECT_RELEASE,
-  RELEASES,
-  detectPlatform,
-  type Platform,
-} from '../lib/site';
+import { RELEASES } from '../lib/site';
 import { useRelease } from '../lib/useRelease';
 import { useDownloadFlow } from './DownloadFlow';
 import { AppleLogo, WindowsLogo } from './Mark';
@@ -75,78 +69,14 @@ export function Download() {
         </p>
       </Reveal>
 
-      {DIRECT_GITHUB_DOWNLOADS ? <DirectDownloadActions /> : <AutomaticDownloadActions />}
+      <DownloadActions />
     </section>
   );
 }
 
-function DirectDownloadActions() {
+function DownloadActions() {
   const { platform, showInstructions } = useDownloadFlow();
-  const asset = platform === 'other' ? null : DIRECT_RELEASE[platform];
-  return (
-    <>
-      <Reveal delay={0.1} className="mt-9 flex flex-wrap items-center justify-center gap-3">
-        {asset ? (
-          <a
-            href={asset.url}
-            onClick={() => {
-              if (platform !== 'other') showInstructions(platform);
-            }}
-            className="inline-flex h-12 items-center gap-2.5 rounded-full bg-ink px-6 text-[15px] font-medium text-bg shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_30px_-12px_rgba(255,255,255,0.35)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_16px_40px_-12px_rgba(255,255,255,0.45)]"
-          >
-            {platform === 'windows' ? <WindowsLogo size={16} /> : <AppleLogo size={16} />}
-            Download for {platform === 'windows' ? 'Windows' : 'macOS'}
-          </a>
-        ) : (
-          PLATFORMS.map(({ id, label, Logo }) => (
-            <a
-              key={id}
-              href={DIRECT_RELEASE[id].url}
-              onClick={() => showInstructions(id)}
-              className="inline-flex h-12 items-center gap-2.5 rounded-full bg-ink px-6 text-[15px] font-medium text-bg transition-transform hover:-translate-y-px"
-            >
-              <Logo size={16} /> Download for {label}
-            </a>
-          ))
-        )}
-      </Reveal>
-      <Reveal
-        delay={0.16}
-        className="mx-auto mt-6 max-w-2xl space-y-3 text-center text-[13px] leading-6 text-muted"
-      >
-        <p>
-          {platform === 'windows'
-            ? 'Windows x64 installer'
-            : platform === 'mac'
-              ? 'Universal Mac app for Apple silicon and Intel'
-              : 'Choose the installer for your computer'}{' '}
-          · {DIRECT_RELEASE.tag} · unsigned. Installation and verification steps appear after you
-          start the download.
-        </p>
-        <p className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
-          <a className="text-ink underline underline-offset-4" href={DIRECT_RELEASE.checksums}>
-            SHA-256 checksums
-          </a>
-          <a className="text-ink underline underline-offset-4" href={DIRECT_RELEASE.url}>
-            GitHub release
-          </a>
-          <a
-            className="text-ink underline underline-offset-4"
-            href="https://github.com/SakethSripada/Perpetual-Desktop#build-from-source"
-          >
-            Or clone and run from source
-          </a>
-        </p>
-      </Reveal>
-    </>
-  );
-}
-
-/** Preserve the manifest-backed, platform-aware flow for signed releases. */
-function AutomaticDownloadActions() {
-  const [platform, setPlatform] = useState<Platform>('other');
   const { release, loading } = useRelease();
-  useEffect(() => setPlatform(detectPlatform()), []);
   const primary = platform === 'other' ? 'windows' : platform;
   return (
     <>
@@ -155,21 +85,23 @@ function AutomaticDownloadActions() {
           id === primary ? (
             <a
               key={id}
-              href={release?.downloads[id].url ?? '#download-status'}
-              aria-disabled={!release}
-              onClick={release ? undefined : (event) => event.preventDefault()}
+              href={release?.downloads[id].url ?? RELEASES}
+              onClick={() => {
+                if (release) showInstructions(id, release);
+              }}
               className="inline-flex h-12 items-center gap-2.5 rounded-full bg-ink px-6 text-[15px] font-medium text-bg shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_30px_-12px_rgba(255,255,255,0.35)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_16px_40px_-12px_rgba(255,255,255,0.45)]"
             >
               <Logo size={16} />
-              {release ? `Download for ${label}` : `${label} download coming soon`}
+              {release ? `Download for ${label}` : `${label} releases`}
               <span className="text-bg/50">{note}</span>
             </a>
           ) : (
             <a
               key={id}
-              href={release?.downloads[id].url ?? '#download-status'}
-              aria-disabled={!release}
-              onClick={release ? undefined : (event) => event.preventDefault()}
+              href={release?.downloads[id].url ?? RELEASES}
+              onClick={() => {
+                if (release) showInstructions(id, release);
+              }}
               className="inline-flex h-12 items-center gap-2.5 rounded-full px-6 text-[15px] font-medium text-muted ring-1 ring-line-strong transition-colors hover:bg-white/[0.04] hover:text-ink"
             >
               <Logo size={16} />
@@ -186,7 +118,7 @@ function AutomaticDownloadActions() {
             ? 'Checking the latest release…'
             : release
               ? 'Choose the installer for your computer. Windows is x64; macOS supports Apple silicon and Intel.'
-              : 'Installers will appear here after the release is published.'}
+              : 'Could not load download details. View the latest installers on GitHub.'}
         </p>
         {release && (
           <p className="max-w-2xl text-[13px] leading-6 text-faint">

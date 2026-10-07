@@ -11,7 +11,7 @@ Download the latest release from [Releases](https://github.com/SakethSripada/Per
 
 The current installers are unsigned. After checking the download as described below, Windows users who trust the GitHub release can choose **More info → Run anyway** on the “Windows protected your PC” SmartScreen prompt. Some managed PCs or Windows 11 Smart App Control settings may not offer that option; don't disable system protection to install Perpetual. On macOS, after attempting to open the app, use **System Settings → Privacy & Security → Open Anyway** if you trust the verified download. These steps do not make an unsigned app signed or remove the warning for other users. See [Microsoft's SmartScreen guidance](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation) and [Apple's instructions](https://support.apple.com/en-us/102445).
 
-You also need at least one of:
+Install [Git](https://git-scm.com/downloads) and at least one of these provider tools, then restart Perpetual so it can discover them:
 
 - [Codex CLI](https://developers.openai.com/codex/cli)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code/setup)
@@ -43,16 +43,17 @@ Sign-ins stay on your computer. Setup tokens are stored in Windows Credential Ma
 
 ## Build from source
 
-Requirements: Git, Node.js 22+, and [rustup](https://rustup.rs/) (which installs Rust 1.96.1 from `rust-toolchain.toml`). On Windows, install Visual Studio Build Tools with the **Desktop development with C++** workload. On macOS, install the Xcode Command Line Tools.
+Requirements: Git, Node.js 22.13+ (22.x), 24.x, or 26+, and [rustup](https://rustup.rs/) (which installs Rust 1.96.1 from `rust-toolchain.toml`). On Windows, install Visual Studio Build Tools with the **Desktop development with C++** workload. On macOS, install the Xcode Command Line Tools.
 
 In PowerShell or macOS Terminal, clone the repository and run the desktop app:
 
 ```sh
-git clone https://github.com/SakethSripada/Perpetual-Desktop.git
+git clone --branch dev https://github.com/SakethSripada/Perpetual-Desktop.git
 cd Perpetual-Desktop
-npm ci
-npm run desktop
+npm start
 ```
+
+`npm start` checks the prerequisites, installs the pinned Rust toolchain and JavaScript dependencies, then opens the desktop app. Missing system tools produce instructions before any build begins. The first Rust build takes several minutes; later launches are much faster. Use `npm run setup` to prepare without launching and `npm run doctor` to check your installation. After setup, `npm run desktop` launches directly without reinstalling dependencies.
 
 Run `npm run bundle` in that same folder to build an installer or app into `target/release/bundle/`. `npm run dev` opens a browser preview of the interface without the engine. The desktop app also needs a signed-in Codex CLI or Claude Code installation as described above.
 
@@ -63,6 +64,13 @@ npm test
 npm run build
 cargo test -p am-core --lib
 cargo test -p perpetual-desktop --test persistence
+```
+
+Optional checks against installed, signed-in providers (use temporary data and consume provider usage):
+
+```sh
+cargo test -p perpetual-desktop --test live_threads -- --ignored --nocapture --test-threads=1
+cargo test -p am-daemon --test live_approval -- --ignored --nocapture --test-threads=1
 ```
 
 Set `PERPETUAL_DATA_DIR` to run the app against a separate data folder while developing.
