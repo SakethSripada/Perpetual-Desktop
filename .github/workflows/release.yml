@@ -32,7 +32,7 @@ jobs:
     outputs:
       signed: ${{ steps.signing.outputs.signed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
       - uses: actions/setup-node@v4
@@ -114,7 +114,7 @@ jobs:
     outputs:
       signed: ${{ steps.signing.outputs.signed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
       - uses: actions/setup-node@v4
