@@ -14,6 +14,7 @@ Decision: hold paid advertising until a release containing these fixes passes th
 - Updated vulnerable npm development dependencies in both packages. Added the landing site's direct Node type dependency and documented the supported Node versions.
 - A failed first send preserves the draft and retries the already-created task after sign-in, rather than switching away and losing the input.
 - The website now uses the published release manifest for all installer links, filenames, and verification hashes, with malformed/incomplete release checks and a ten-second request timeout. It falls back to GitHub releases when metadata cannot load.
+- Download instructions explicitly include Git and provider CLI prerequisites, restarting after installation, and a source-guide link to the tested `dev` branch.
 - Source setup is one command (`npm start`) after system prerequisites: it installs the pinned Rust toolchain and locked JavaScript dependencies, then launches the app. `npm run doctor` explains missing prerequisites and dependencies. The source guide explicitly clones `dev`, the reviewed branch.
 - CI now packages and uploads both Windows and universal macOS installers for each commit. Release rebuilding updates unpublished drafts and refuses to replace published binaries. The release version check also includes the native Cargo package, and site deployment checks out the published tag.
 - Updated event-listener to 5.4.2, chacha20 to 0.10.2, and spin to 0.9.9 in the Rust lockfile.

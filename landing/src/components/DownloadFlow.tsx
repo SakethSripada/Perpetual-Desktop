@@ -177,6 +177,28 @@ function InstallDialog({
               </p>
             )}
           </section>
+          <section className="mt-4 rounded-xl border border-line p-4 text-[13px]">
+            <h3 className="font-medium text-sage">Set up your coding agent</h3>
+            <p className="mt-2">
+              Install{' '}
+              <a className="text-ink underline" href="https://git-scm.com/downloads">
+                Git
+              </a>{' '}
+              and either{' '}
+              <a className="text-ink underline" href="https://developers.openai.com/codex/cli">
+                Codex CLI
+              </a>{' '}
+              or{' '}
+              <a
+                className="text-ink underline"
+                href="https://docs.anthropic.com/en/docs/claude-code/setup"
+              >
+                Claude Code
+              </a>
+              . Restart Perpetual after installing them, then sign in from the app. Existing CLI
+              sign-ins are detected automatically.
+            </p>
+          </section>
           <p className="mt-4 text-[13px]">
             Download not starting?{' '}
             <a className="font-medium text-ink underline underline-offset-4" href={asset.url}>
@@ -278,7 +300,7 @@ function InstallDialog({
               Prefer to build from source?{' '}
               <a
                 className="text-ink underline underline-offset-4"
-                href={`${REPO}#build-from-source`}
+                href={`${REPO}/blob/dev/README.md#build-from-source`}
               >
                 View the setup guide
               </a>

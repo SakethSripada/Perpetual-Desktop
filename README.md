@@ -11,7 +11,7 @@ Download the latest release from [Releases](https://github.com/SakethSripada/Per
 
 The current installers are unsigned. After checking the download as described below, Windows users who trust the GitHub release can choose **More info → Run anyway** on the “Windows protected your PC” SmartScreen prompt. Some managed PCs or Windows 11 Smart App Control settings may not offer that option; don't disable system protection to install Perpetual. On macOS, after attempting to open the app, use **System Settings → Privacy & Security → Open Anyway** if you trust the verified download. These steps do not make an unsigned app signed or remove the warning for other users. See [Microsoft's SmartScreen guidance](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation) and [Apple's instructions](https://support.apple.com/en-us/102445).
 
-You also need at least one of:
+Install [Git](https://git-scm.com/downloads) and at least one of these provider tools, then restart Perpetual so it can discover them:
 
 - [Codex CLI](https://developers.openai.com/codex/cli)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code/setup)
