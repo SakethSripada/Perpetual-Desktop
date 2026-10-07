@@ -116,6 +116,7 @@ export function Composer({
   const [options, setOptions] = useState(false);
   const [suggestion, setSuggestion] = useState(0);
   const input = useRef<HTMLTextAreaElement>(null);
+  const sending = useRef(false);
 
   const catalog = store.models.find((m) => m.agent === agent);
   const selected = store.modelPreferences.selected[agent];
@@ -220,7 +221,8 @@ export function Composer({
   };
 
   const send = async () => {
-    if (!text.trim() || busy) return;
+    if (!text.trim() || busy || sending.current) return;
+    const submittedText = text;
     let message = text.trim();
     let runPermission = permission;
     const command = parseCommand(message);
@@ -302,20 +304,25 @@ export function Composer({
         return;
       }
     }
-    if (
-      await onSend(message, {
-        agent,
-        permission: runPermission,
-        execution_backend: 'host',
-        model: model || (!thread ? preferredDefault || null : null),
-        reasoning: reasoning || null,
-        repo_ids: repos,
-        task_budget: budget,
-        local_provider: chosenModel?.local_provider,
-        local_base_url: chosenModel?.local_base_url,
-      })
-    )
-      setText('');
+    sending.current = true;
+    try {
+      if (
+        await onSend(message, {
+          agent,
+          permission: runPermission,
+          execution_backend: 'host',
+          model: model || (!thread ? preferredDefault || null : null),
+          reasoning: reasoning || null,
+          repo_ids: repos,
+          task_budget: budget,
+          local_provider: chosenModel?.local_provider,
+          local_base_url: chosenModel?.local_base_url,
+        })
+      )
+        setText((current) => (current === submittedText ? '' : current));
+    } finally {
+      sending.current = false;
+    }
   };
 
   const suggestions = /^\/[a-z-]*$/.test(text)

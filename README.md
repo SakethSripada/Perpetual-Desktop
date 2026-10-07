@@ -43,7 +43,7 @@ Sign-ins stay on your computer. Setup tokens are stored in Windows Credential Ma
 
 ## Build from source
 
-Requirements: Git, Node.js 22+, and [rustup](https://rustup.rs/) (which installs Rust 1.96.1 from `rust-toolchain.toml`). On Windows, install Visual Studio Build Tools with the **Desktop development with C++** workload. On macOS, install the Xcode Command Line Tools.
+Requirements: Git, Node.js 22.13+ (22.x), 24.x, or 26+, and [rustup](https://rustup.rs/) (which installs Rust 1.96.1 from `rust-toolchain.toml`). On Windows, install Visual Studio Build Tools with the **Desktop development with C++** workload. On macOS, install the Xcode Command Line Tools.
 
 In PowerShell or macOS Terminal, clone the repository and run the desktop app:
 
@@ -63,6 +63,13 @@ npm test
 npm run build
 cargo test -p am-core --lib
 cargo test -p perpetual-desktop --test persistence
+```
+
+Optional checks against installed, signed-in providers (use temporary data and consume provider usage):
+
+```sh
+cargo test -p perpetual-desktop --test live_threads -- --ignored --nocapture --test-threads=1
+cargo test -p am-daemon --test live_approval -- --ignored --nocapture --test-threads=1
 ```
 
 Set `PERPETUAL_DATA_DIR` to run the app against a separate data folder while developing.

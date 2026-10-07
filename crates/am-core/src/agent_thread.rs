@@ -526,7 +526,13 @@ impl AppCore {
         let account = if local_model.is_some() {
             None
         } else {
-            match self.select_provider_account(agent).await? {
+            let limit_policy = self.get_limit_policy().await?;
+            let required_id = (thread.status == TaskStatus::WaitingForLimit
+                && message.is_none()
+                && (!limit_policy.auto_switch || !limit_policy.resume_with_earliest))
+                .then_some(thread.provider_account_id.as_deref())
+                .flatten();
+            match self.select_provider_account_for(agent, required_id).await? {
                 AccountSelection::Unmanaged => None,
                 AccountSelection::Ready(account) => Some(account),
                 AccountSelection::SignedOut => {
