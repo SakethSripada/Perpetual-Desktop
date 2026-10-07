@@ -13,7 +13,9 @@
 3. The **Release** workflow builds the Windows installer and a universal macOS app, signs them (when signing is configured), checks the signatures, writes `SHA256SUMS.txt`, records a build provenance attestation, and opens a **draft** GitHub release.
 4. Download the installer from the draft, install it on a clean Windows account, and run through the checklist below. Then publish the draft.
 
-To rebuild an existing tag, run the workflow manually and enter the tag.
+The Check workflow also uploads Windows and universal macOS installers for each tested commit, including `dev`, so you can test a candidate before tagging.
+
+To rebuild an unpublished draft, run the Release workflow manually and enter its tag. This updates the draft assets and matching checksums. Published releases are immutable: use a new version instead. Publishing a release triggers the Site workflow; download links and verification hashes follow that release automatically.
 
 ## Code signing
 

@@ -8,6 +8,7 @@ import type { LimitPolicy } from './types';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { Composer } from '../components/Composer';
 import { Accounts } from '../components/Accounts';
+import { Conversation } from '../components/Conversation';
 
 vi.mock('./api', () => ({
   native: true,
@@ -238,5 +239,48 @@ describe('account creation', () => {
     expect(
       vi.mocked(rpc).mock.calls.filter(([method]) => method === 'set_provider_account_token'),
     ).toHaveLength(1);
+  });
+});
+
+describe('first task authentication failure', () => {
+  it('keeps the draft and retries the same created task after sign-in fails', async () => {
+    const implementation = vi.mocked(rpc).getMockImplementation()!;
+    let attempts = 0;
+    vi.mocked(rpc).mockImplementation(async (name, payload) => {
+      if (name === 'create_agent_thread') return { id: 'new-thread', status: 'draft' };
+      if (name === 'send_thread_message' && ++attempts === 1) throw new Error('Sign in required');
+      return implementation(name, payload);
+    });
+    const onSelect = vi.fn();
+    await act(async () =>
+      root.render(
+        <Tooltip.Provider>
+          <StoreProvider>
+            <Conversation onSelect={onSelect} onNavigate={() => {}} />
+          </StoreProvider>
+        </Tooltip.Provider>,
+      ),
+    );
+    const input = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+        input,
+        'Keep my first request',
+      );
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.click(),
+    );
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(input.value).toBe('Keep my first request');
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.click(),
+    );
+    expect(onSelect).toHaveBeenCalledWith('new-thread');
+    expect(
+      vi.mocked(rpc).mock.calls.filter(([name]) => name === 'create_agent_thread'),
+    ).toHaveLength(1);
+    expect(attempts).toBe(2);
   });
 });

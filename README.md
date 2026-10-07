@@ -48,11 +48,12 @@ Requirements: Git, Node.js 22.13+ (22.x), 24.x, or 26+, and [rustup](https://rus
 In PowerShell or macOS Terminal, clone the repository and run the desktop app:
 
 ```sh
-git clone https://github.com/SakethSripada/Perpetual-Desktop.git
+git clone --branch dev https://github.com/SakethSripada/Perpetual-Desktop.git
 cd Perpetual-Desktop
-npm ci
-npm run desktop
+npm start
 ```
+
+`npm start` checks the prerequisites, installs the pinned Rust toolchain and JavaScript dependencies, then opens the desktop app. Missing system tools produce instructions before any build begins. The first Rust build takes several minutes; later launches are much faster. Use `npm run setup` to prepare without launching and `npm run doctor` to check your installation. After setup, `npm run desktop` launches directly without reinstalling dependencies.
 
 Run `npm run bundle` in that same folder to build an installer or app into `target/release/bundle/`. `npm run dev` opens a browser preview of the interface without the engine. The desktop app also needs a signed-in Codex CLI or Claude Code installation as described above.
 
