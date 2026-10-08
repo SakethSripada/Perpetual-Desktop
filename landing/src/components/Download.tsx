@@ -1,14 +1,13 @@
 import { useRef } from 'react';
 import { motion, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react';
-import { RELEASES } from '../lib/site';
-import { useRelease } from '../lib/useRelease';
+import { REPO } from '../lib/site';
 import { useDownloadFlow } from './DownloadFlow';
 import { AppleLogo, WindowsLogo } from './Mark';
 import { Reveal } from './Reveal';
 
 const PLATFORMS = [
-  { id: 'windows', label: 'Windows', note: '.exe', Logo: WindowsLogo },
-  { id: 'mac', label: 'macOS', note: '.dmg', Logo: AppleLogo },
+  { id: 'windows', label: 'Windows', note: 'Source', Logo: WindowsLogo },
+  { id: 'mac', label: 'macOS', note: 'Source', Logo: AppleLogo },
 ] as const;
 
 export function Download() {
@@ -76,50 +75,42 @@ export function Download() {
 
 function DownloadActions() {
   const { platform, showInstructions } = useDownloadFlow();
-  const { release, loading } = useRelease();
   const primary = platform === 'other' ? 'windows' : platform;
   return (
     <>
       <Reveal delay={0.1} className="mt-9 flex flex-wrap items-center justify-center gap-3">
         {PLATFORMS.map(({ id, label, note, Logo }) =>
           id === primary ? (
-            <a
+            <button
+              type="button"
               key={id}
-              href={release?.downloads[id].url ?? RELEASES}
-              onClick={() => {
-                if (release) showInstructions(id, release);
-              }}
+              onClick={() => showInstructions(id)}
               className="inline-flex h-12 items-center gap-2.5 rounded-full bg-ink px-6 text-[15px] font-medium text-bg shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_30px_-12px_rgba(255,255,255,0.35)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_16px_40px_-12px_rgba(255,255,255,0.45)]"
             >
               <Logo size={16} />
-              {release ? `Download for ${label}` : `${label} releases`}
+              {`Download for ${label}`}
               <span className="text-bg/50">{note}</span>
-            </a>
+            </button>
           ) : (
-            <a
+            <button
+              type="button"
               key={id}
-              href={release?.downloads[id].url ?? RELEASES}
-              onClick={() => {
-                if (release) showInstructions(id, release);
-              }}
+              onClick={() => showInstructions(id)}
               className="inline-flex h-12 items-center gap-2.5 rounded-full px-6 text-[15px] font-medium text-muted ring-1 ring-line-strong transition-colors hover:bg-white/[0.04] hover:text-ink"
             >
               <Logo size={16} />
               {label}
               <span className="text-faint">{note}</span>
-            </a>
+            </button>
           ),
         )}
       </Reveal>
 
       <Reveal delay={0.16} className="mt-7 flex flex-col items-center gap-3 text-center">
         <p id="download-status" className="text-[13px] text-muted">
-          {loading
-            ? 'Checking the latest release…'
-            : release
-              ? 'Choose the installer for your computer. Windows is x64; macOS supports Apple silicon and Intel.'
-              : 'Could not load download details. View the latest installers on GitHub.'}
+          Clone the source and run npm start. Setup builds and opens Perpetual on your computer.
         </p>
+        {/* Installer notice paused until signed downloads return.
         {release && (
           <p className="max-w-2xl text-[13px] leading-6 text-faint">
             These installers are unsigned. Windows SmartScreen or macOS Gatekeeper may warn on first
@@ -142,8 +133,9 @@ function DownloadActions() {
             .
           </p>
         )}
+        */}
         <a
-          href={release?.checksums.url ?? RELEASES}
+          href={`${REPO}/blob/dev/README.md#build-from-source`}
           className="inline-flex items-center gap-2 text-center text-[13px] text-balance text-faint transition-colors hover:text-muted"
         >
           <svg
@@ -160,9 +152,7 @@ function DownloadActions() {
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             <path d="m9 12 2 2 4-4" />
           </svg>
-          {release
-            ? 'View the SHA-256 checksums for this release'
-            : 'Source, releases, and build provenance on GitHub'}
+          View the source setup guide on GitHub
         </a>
       </Reveal>
     </>

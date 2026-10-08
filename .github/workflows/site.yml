@@ -29,7 +29,9 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: landing/package-lock.json
+      # Retained for when signed installer downloads are enabled again.
       - name: Snapshot the latest published release
+        if: ${{ false }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh api "repos/$GITHUB_REPOSITORY/releases/latest" > landing/public/release.json

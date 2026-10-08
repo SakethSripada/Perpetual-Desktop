@@ -15,7 +15,7 @@
 
 The Check workflow also uploads Windows and universal macOS installers for each tested commit, including `dev`, so you can test a candidate before tagging.
 
-To rebuild an unpublished draft, run the Release workflow manually and enter its tag. This updates the draft assets and matching checksums. Published releases are immutable: use a new version instead. Publishing a release triggers the Site workflow; download links and verification hashes follow that release automatically.
+To rebuild an unpublished draft, run the Release workflow manually and enter its tag. This updates the draft assets and matching checksums. Published releases are immutable: use a new version instead. Publishing a release triggers the Site workflow; the installer UI and release parsing code are retained, but the landing page currently directs users to source setup. Restore the installer flow and unsigned-download notice only when downloads are ready to be offered again.
 
 ## Code signing
 
