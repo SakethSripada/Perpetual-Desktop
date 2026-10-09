@@ -84,6 +84,7 @@ fn app_server_args(spec: &SessionSpec) -> Vec<String> {
     if let Some(policy) = spec.policy.as_ref() {
         crate::codex::push_policy_args(&mut args, policy);
     }
+    crate::codex::push_host_runtime_args(&mut args, &spec.runtime);
     args
 }
 
@@ -1318,6 +1319,11 @@ mod tests {
         };
         let args = app_server_args(&spec);
         assert_eq!(args[0], "app-server");
+        assert_eq!(
+            args.windows(2)
+                .any(|pair| pair == ["-c", "windows.sandbox=\"unelevated\""]),
+            cfg!(windows)
+        );
         assert!(args
             .iter()
             .any(|arg| arg == "mcp_servers.untrusted.enabled=false"));

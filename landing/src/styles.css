@@ -83,7 +83,109 @@
   }
 }
 
+/* Compact terminal action with a vertical icon and label exchange. */
+.copy-command-button {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 6px;
+  padding: 0 9px;
+  background: #202120;
+  color: var(--color-ink);
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+.copy-command-button:hover {
+  background: #2b2d2b;
+  border-color: rgb(255 255 255 / 0.25);
+}
+.copy-command-button:active {
+  transform: scale(0.96);
+}
+.copy-command-icon-slot {
+  position: relative;
+  width: 14px;
+  height: 16px;
+  overflow: hidden;
+}
+.copy-command-icon {
+  position: absolute;
+  inset: 1px 0;
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition:
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms ease;
+}
+.copy-command-check {
+  opacity: 0;
+  transform: translateY(16px);
+}
+.copy-command-button[data-copied='true'] .copy-command-pages {
+  opacity: 0;
+  transform: translateY(-16px);
+}
+.copy-command-button[data-copied='true'] .copy-command-check {
+  opacity: 1;
+  transform: translateY(0);
+}
+.copy-command-button[data-copied='true'] .copy-command-check path {
+  stroke-dasharray: 24;
+  animation: copy-check-draw 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.copy-command-label {
+  position: relative;
+  display: grid;
+  height: 14px;
+  overflow: hidden;
+  align-items: center;
+  text-align: left;
+}
+.copy-command-label > span {
+  grid-area: 1 / 1;
+  transition:
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms ease;
+}
+.copy-command-label-success {
+  opacity: 0;
+  transform: translateY(14px);
+}
+.copy-command-button[data-copied='true'] .copy-command-label-default {
+  opacity: 0;
+  transform: translateY(-14px);
+}
+.copy-command-button[data-copied='true'] .copy-command-label-success {
+  opacity: 1;
+  transform: translateY(0);
+}
+@keyframes copy-check-draw {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .copy-command-button:hover,
+  .copy-command-button:active {
+    transform: none;
+  }
   *,
   *::before,
   *::after {

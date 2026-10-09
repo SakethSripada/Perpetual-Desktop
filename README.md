@@ -2,36 +2,11 @@
 
 A desktop workspace for Windows and macOS for long-running Codex and Claude Code tasks. Perpetual keeps a task's conversation, workspace, and queued messages together, and when an account reaches its usage limit it continues on your next account.
 
-## Install
+## Get started
 
-Download the latest release from [Releases](https://github.com/SakethSripada/Perpetual-Desktop/releases):
+Installer downloads are temporarily paused while signed releases are prepared. Run Perpetual from source using the commands in [Build from source](#build-from-source).
 
-- **Windows:** run the `.exe` installer. It installs for your account only and doesn't need administrator rights.
-- **macOS 11 or later:** open the `.dmg` and drag Perpetual to Applications.
-
-The current installers are unsigned. After checking the download as described below, Windows users who trust the GitHub release can choose **More info → Run anyway** on the “Windows protected your PC” SmartScreen prompt. Some managed PCs or Windows 11 Smart App Control settings may not offer that option; don't disable system protection to install Perpetual. On macOS, after attempting to open the app, use **System Settings → Privacy & Security → Open Anyway** if you trust the verified download. These steps do not make an unsigned app signed or remove the warning for other users. See [Microsoft's SmartScreen guidance](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation) and [Apple's instructions](https://support.apple.com/en-us/102445).
-
-Install [Git](https://git-scm.com/downloads) and at least one of these provider tools, then restart Perpetual so it can discover them:
-
-- [Codex CLI](https://developers.openai.com/codex/cli)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code/setup)
-
-If the CLI is already signed in, Perpetual picks up that account automatically. Models are read from the CLIs you have installed, so new models show up as soon as you update the CLI.
-
-### Verify your download
-
-Each release lists the SHA-256 hash of every download in `SHA256SUMS.txt`. To check your copy:
-
-```sh
-Get-FileHash .\Perpetual_0.1.0_x64-setup.exe -Algorithm SHA256   # Windows (PowerShell)
-shasum -a 256 Perpetual_0.1.0_universal.dmg                       # macOS
-```
-
-Release builds are made by GitHub Actions from this repository. You can confirm that with the [GitHub CLI](https://cli.github.com/):
-
-```sh
-gh attestation verify Perpetual_0.1.0_x64-setup.exe --repo SakethSripada/Perpetual-Desktop
-```
+Setup installs Codex CLI if neither Codex nor Claude Code is available. You can also install [Claude Code](https://docs.anthropic.com/en/docs/claude-code/setup). Sign in from Perpetual to start running tasks. Existing CLI sign-ins are detected automatically.
 
 ## Accounts
 
@@ -43,7 +18,7 @@ Sign-ins stay on your computer. Setup tokens are stored in Windows Credential Ma
 
 ## Build from source
 
-Requirements: Git, Node.js 22.13+ (22.x), 24.x, or 26+, and [rustup](https://rustup.rs/) (which installs Rust 1.96.1 from `rust-toolchain.toml`). On Windows, install Visual Studio Build Tools with the **Desktop development with C++** workload. On macOS, install the Xcode Command Line Tools.
+Install [Git](https://git-scm.com/downloads) and Node.js 24 LTS (also supported: Node 22.13+ on 22.x, or 26+). Use Windows or macOS. On Windows, [App Installer](https://apps.microsoft.com/detail/9nblggh4nns1) provides `winget` for installing missing system tools.
 
 In PowerShell or macOS Terminal, clone the repository and run the desktop app:
 
@@ -53,7 +28,11 @@ cd Perpetual-Desktop
 npm start
 ```
 
-`npm start` checks the prerequisites, installs the pinned Rust toolchain and JavaScript dependencies, then opens the desktop app. Missing system tools produce instructions before any build begins. The first Rust build takes several minutes; later launches are much faster. Use `npm run setup` to prepare without launching and `npm run doctor` to check your installation. After setup, `npm run desktop` launches directly without reinstalling dependencies.
+`npm start` installs missing native build dependencies (Microsoft C++ Build Tools and WebView2 on Windows, or Xcode Command Line Tools on macOS), rustup, the pinned Rust toolchain, and JavaScript dependencies, then opens the desktop app. Accept the system installation prompts; Windows may request administrator approval or a restart. If a restart is needed, run `npm start` again afterward. The first Rust build takes several minutes. Keep the terminal open while using the app.
+
+If neither coding agent is installed, setup installs Codex CLI in `~/.perpetual/tools` (your user profile on Windows) and makes it available to the app without a global npm installation. Sign in from Perpetual to run tasks. Use `npm run setup` to prepare without launching and `npm run doctor` to check build prerequisites. After setup, `npm run desktop` launches directly without reinstalling dependencies.
+
+For manual setup or managed computers, install [rustup](https://rustup.rs/), plus Visual Studio Build Tools with **Desktop development with C++** and a Windows SDK and WebView2 on Windows, or Xcode Command Line Tools (`xcode-select --install`) on macOS. Then run `npm start`. Rust 1.96.1 is pinned in `rust-toolchain.toml`.
 
 Run `npm run bundle` in that same folder to build an installer or app into `target/release/bundle/`. `npm run dev` opens a browser preview of the interface without the engine. The desktop app also needs a signed-in Codex CLI or Claude Code installation as described above.
 

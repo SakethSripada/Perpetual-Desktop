@@ -1,4 +1,3 @@
-import { useRelease } from '../lib/useRelease';
 import { PLATFORM_NAME } from '../lib/site';
 import { useDownloadFlow } from './DownloadFlow';
 import { AppleLogo, WindowsLogo } from './Mark';
@@ -15,30 +14,16 @@ const buttonStyle = (small: boolean, className: string) =>
 
 export function DownloadButton({ size = 'lg', className = '' }: Props) {
   const { platform, showInstructions } = useDownloadFlow();
-  const { release, loading } = useRelease();
   const small = size === 'sm';
-  const asset = platform === 'other' ? null : release?.downloads[platform];
   return (
-    <a
-      href={asset?.url ?? '#download'}
-      onClick={() => {
-        if (release && platform !== 'other') showInstructions(platform, release);
-      }}
+    <button
+      type="button"
+      onClick={() => showInstructions()}
       className={buttonStyle(small, className)}
     >
       {platform === 'windows' && <WindowsLogo size={small ? 12 : 15} />}
       {platform === 'mac' && <AppleLogo size={small ? 13 : 16} />}
-      {small
-        ? release
-          ? 'Download'
-          : 'Downloads'
-        : loading
-          ? 'Checking downloads…'
-          : !release
-            ? 'View releases on GitHub'
-            : platform === 'other'
-              ? 'Choose your download'
-              : `Download for ${PLATFORM_NAME[platform]}`}
-    </a>
+      {small || platform === 'other' ? 'Download' : `Download for ${PLATFORM_NAME[platform]}`}
+    </button>
   );
 }

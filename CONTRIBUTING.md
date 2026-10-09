@@ -13,8 +13,7 @@ Thanks for helping improve Perpetual Desktop.
 Install the prerequisites listed in the README, then run:
 
 ```sh
-npm ci
-npm run desktop
+npm start
 ```
 
 The frontend is in `src/`, the Tauri shell is in `src-tauri/`, and the Rust workspace is in `crates/`.

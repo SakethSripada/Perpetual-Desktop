@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -34,41 +35,114 @@ function npm(args) {
   return run(process.execPath, [process.env.npm_execpath, ...args]);
 }
 
-export async function setup({ check = false, launch = false } = {}) {
-  const missing = [];
-  if (!supportedNode(process.version))
-    missing.push('Install Node.js 22.13+ (22.x), 24.x, or 26+: https://nodejs.org/');
-  if (!['win32', 'darwin'].includes(process.platform))
-    missing.push('The desktop app supports Windows and macOS.');
-  if (probe('git', ['--version']).status !== 0)
-    missing.push('Install Git: https://git-scm.com/downloads');
-  if (probe('rustup', ['--version']).status !== 0)
-    missing.push('Install rustup: https://rustup.rs/');
-  if (windows) {
-    const vswhere = path.join(
-      process.env['ProgramFiles(x86)'] ?? 'C:/Program Files (x86)',
-      'Microsoft Visual Studio/Installer/vswhere.exe',
-    );
-    const vs = probe(vswhere, [
-      '-latest',
-      '-products',
-      '*',
-      '-requires',
-      'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
-      '-property',
-      'installationPath',
-    ]);
-    if (vs.status !== 0 || !vs.stdout?.trim())
-      missing.push(
-        'Install Visual Studio Build Tools with Desktop development with C++ (including a Windows SDK): https://visualstudio.microsoft.com/visual-cpp-build-tools/',
-      );
-  } else if (process.platform === 'darwin' && probe('xcode-select', ['-p']).status !== 0) {
-    missing.push('Install Apple command-line tools: xcode-select --install');
-  }
-  if (missing.length)
+function hasBuildTools() {
+  const vswhere = path.join(
+    process.env['ProgramFiles(x86)'] ?? 'C:/Program Files (x86)',
+    'Microsoft Visual Studio/Installer/vswhere.exe',
+  );
+  const vs = probe(vswhere, [
+    '-latest',
+    '-products',
+    '*',
+    '-requires',
+    'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+    '-property',
+    'installationPath',
+  ]);
+  return vs.status === 0 && Boolean(vs.stdout?.trim());
+}
+
+async function winget(id, extra = []) {
+  if (probe('winget', ['--version']).status !== 0)
     throw new Error(
-      `Setup needs these prerequisites:\n\n${missing.map((item) => `- ${item}`).join('\n')}\n\nRestart your terminal after installing them, then run npm start again.`,
+      'Install App Installer from the Microsoft Store to enable winget, then run npm start again. Alternatively, install the prerequisites listed in README.md.',
     );
+  await run('winget', [
+    'install',
+    '--id',
+    id,
+    '--exact',
+    '--source',
+    'winget',
+    '--accept-package-agreements',
+    '--accept-source-agreements',
+    ...extra,
+  ]);
+}
+
+async function installRustup() {
+  const directory = mkdtempSync(path.join(tmpdir(), 'perpetual-rustup-'));
+  try {
+    const target = windows
+      ? `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-pc-windows-msvc`
+      : `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`;
+    const installer = path.join(directory, windows ? 'rustup-init.exe' : 'rustup-init');
+    const response = await fetch(
+      `https://static.rust-lang.org/rustup/dist/${target}/rustup-init${windows ? '.exe' : ''}`,
+    );
+    if (!response.ok) throw new Error(`Rust installer download failed (${response.status}).`);
+    writeFileSync(installer, Buffer.from(await response.arrayBuffer()), { mode: 0o700 });
+    await run(installer, ['-y', '--profile', 'minimal', '--default-toolchain', 'none']);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+export async function setup({ check = false, launch = false } = {}) {
+  if (!supportedNode(process.version))
+    throw new Error('Install Node.js 22.13+ (22.x), 24.x, or 26+: https://nodejs.org/');
+  if (!['win32', 'darwin'].includes(process.platform))
+    throw new Error('The desktop app supports Windows and macOS.');
+  if (probe('git', ['--version']).status !== 0)
+    throw new Error('Install Git: https://git-scm.com/downloads');
+
+  // Newly installed Rust must be visible to this process and the desktop build.
+  const cargoBin = path.join(process.env.CARGO_HOME || path.join(homedir(), '.cargo'), 'bin');
+  const providerRoot = path.join(homedir(), '.perpetual', 'tools');
+  const providerBin = path.join(providerRoot, 'node_modules', '.bin');
+  process.env.PATH = [cargoBin, providerBin, process.env.PATH ?? ''].join(path.delimiter);
+  if (windows && !hasBuildTools()) {
+    if (check) throw new Error('C++ build tools are missing. Run npm run setup.');
+    console.log('Installing Microsoft C++ Build Tools. Accept the system prompts.');
+    await winget('Microsoft.VisualStudio.2022.BuildTools', [
+      '--override',
+      '--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended',
+    ]);
+    if (!hasBuildTools())
+      throw new Error(
+        'Finish installing Desktop development with C++ and a Windows SDK, restart if prompted, then run npm start again.',
+      );
+  } else if (!windows && probe('xcode-select', ['-p']).status !== 0) {
+    if (check) throw new Error('Apple command-line tools are missing. Run npm run setup.');
+    console.log('Accept the Apple command-line tools installation. Waiting for it to finish…');
+    const result = probe('xcode-select', ['--install']);
+    if (result.status !== 0)
+      throw new Error(
+        'Install Apple command-line tools with xcode-select --install, then run npm start again.',
+      );
+    const deadline = Date.now() + 60 * 60 * 1000;
+    while (probe('xcode-select', ['-p']).status !== 0) {
+      if (Date.now() >= deadline)
+        throw new Error('Finish installing Apple command-line tools, then run npm start again.');
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+  }
+  if (windows) {
+    const webview = probe('powershell.exe', [
+      '-NoProfile',
+      '-Command',
+      "$paths = @('HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\*', 'HKLM:\\SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\*', 'HKCU:\\Software\\Microsoft\\EdgeUpdate\\Clients\\*'); if (Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.name -eq 'Microsoft Edge WebView2 Runtime' -and $_.pv -and $_.pv -ne '0.0.0.0' }) { exit 0 }; exit 1",
+    ]);
+    if (webview.status !== 0) {
+      if (check) throw new Error('WebView2 Runtime is missing. Run npm run setup.');
+      await winget('Microsoft.EdgeWebView2Runtime');
+    }
+  }
+  if (probe('rustup', ['--version']).status !== 0) {
+    if (check) throw new Error('Rust is missing. Run npm run setup.');
+    console.log('Installing Rust from rust-lang.org…');
+    await installRustup();
+  }
   const toolchain = readFileSync(path.join(root, 'rust-toolchain.toml'), 'utf8').match(
     /channel\s*=\s*"([^"]+)"/,
   )?.[1];
@@ -92,12 +166,19 @@ export async function setup({ check = false, launch = false } = {}) {
       '--no-self-update',
     ]);
     await npm(['ci']);
+    const hasProvider = windows
+      ? ['codex', 'claude'].some((name) => probe('where.exe', [name]).status === 0)
+      : ['codex', 'claude'].some((name) => probe(name, ['--version']).status === 0);
+    if (!hasProvider) {
+      console.log('Installing Codex CLI so you can sign in and run tasks…');
+      await npm(['install', '--prefix', providerRoot, '--no-audit', '--no-fund', '@openai/codex']);
+    }
     console.log(
       'Source setup complete. Run npm run desktop to open Perpetual, or npm run bundle to build an installer.',
     );
   }
   console.log(
-    'To run tasks, install Codex CLI or Claude Code and sign in from the app. Existing signed-in CLI accounts are detected automatically.',
+    'Sign in from the app to run tasks. Existing signed-in CLI accounts are detected automatically.',
   );
   if (launch) await npm(['run', 'desktop']);
 }

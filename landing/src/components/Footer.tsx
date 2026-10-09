@@ -4,7 +4,7 @@ import { Mark } from './Mark';
 export function Footer() {
   const links = [
     ['GitHub', REPO],
-    ['Releases', `${REPO}/releases`],
+    ['Setup guide', `${REPO}/blob/dev/README.md#build-from-source`],
     ['License', `${REPO}/blob/main/LICENSE`],
     ['Security', `${REPO}/blob/main/SECURITY.md`],
   ];

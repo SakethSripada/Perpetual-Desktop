@@ -1293,14 +1293,18 @@ impl AppCore {
                     &worktree,
                     "Perpetual applied changes checkpoint",
                     GENERATED_CONTEXT_FILES,
-                )
+                )?;
+                // An agent may already have committed its edits. In that case
+                // there is nothing to checkpoint, but the applied diff still
+                // needs to advance to the current HEAD.
+                am_vcs::head_sha(&worktree)
             })
             .await
             .map_err(|e| CoreError::Other(e.to_string()))?;
             let mut result = item.result;
             result.applied = true;
             match checkpoint {
-                Ok(Some(base_ref)) => {
+                Ok(base_ref) => {
                     am_db::repos::agent_thread_repo::upsert(
                         &self.db.pool,
                         thread_id,
@@ -1312,7 +1316,6 @@ impl AppCore {
                     )
                     .await?;
                 }
-                Ok(None) => {}
                 Err(err) => {
                     result.blocker = Some(format!(
                         "Changes were applied, but the managed workspace could not be checkpointed: {err}"
@@ -3886,6 +3889,10 @@ fn status_label(status: SessionStatus) -> &'static str {
         SessionStatus::Failed => "failed",
     }
 }
+
+#[cfg(test)]
+#[path = "agent_thread_multi_repo_tests.rs"]
+mod multi_repo_tests;
 
 #[cfg(test)]
 mod tests {

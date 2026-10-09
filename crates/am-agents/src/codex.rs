@@ -222,6 +222,8 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
         push_policy_args(&mut args, policy);
     }
 
+    push_host_runtime_args(&mut args, &spec.runtime);
+
     if let Some(prior) = resume {
         args.push("resume".into());
         args.push(prior.agent_session_id.clone());
@@ -231,6 +233,21 @@ fn build_args(spec: &SessionSpec, resume: Option<&SessionRef>) -> Vec<String> {
     }
 
     args
+}
+
+/// Perpetual runs independently of Codex desktop's runtime and setup lifecycle.
+/// Elevated Windows setup refreshes ACLs on shared desktop runtime executables;
+/// an executable already in use can make that refresh fail with sharing error 32,
+/// preventing both shell tools and the Node fallback from starting. Use Codex's
+/// restricted-token fallback for our host sessions. This changes the Windows
+/// implementation, not the selected read-only/workspace-write permission policy.
+/// Keep the override child-only and apply it after policy configuration in both
+/// transports, without rewriting the user's Codex configuration.
+pub(crate) fn push_host_runtime_args(args: &mut Vec<String>, runtime: &crate::SessionRuntime) {
+    if cfg!(windows) && matches!(runtime, crate::SessionRuntime::Host { .. }) {
+        args.push("-c".into());
+        args.push("windows.sandbox=\"unelevated\"".into());
+    }
 }
 
 /// Append Codex CLI `-c` overrides for Perpetual's effective tool policy.
@@ -851,6 +868,28 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn windows_runtime_override_is_host_only() {
+        let mut host_args = Vec::new();
+        push_host_runtime_args(&mut host_args, &crate::SessionRuntime::default());
+        assert_eq!(
+            host_args
+                .iter()
+                .any(|arg| arg == "windows.sandbox=\"unelevated\""),
+            cfg!(windows)
+        );
+        let docker = crate::SessionRuntime::DockerSandbox {
+            name: "test".into(),
+            cpus: 2,
+            memory: "4g".into(),
+            network_preset: "balanced".into(),
+            limits: crate::RuntimeLimits::default(),
+        };
+        let mut args = Vec::new();
+        push_host_runtime_args(&mut args, &docker);
+        assert!(args.is_empty());
+    }
+
+    #[test]
     fn builds_start_args_with_workspace_write() {
         let spec = SessionSpec {
             worktree: "/tmp/worktree".into(),
@@ -864,21 +903,22 @@ mod tests {
             approver: None,
         };
 
-        assert_eq!(
-            build_args(&spec, None),
-            vec![
-                "exec",
-                "--json",
-                "--color",
-                "never",
-                "--skip-git-repo-check",
-                "--sandbox",
-                "workspace-write",
-                "--model",
-                "gpt-5.1-codex",
-                "Implement it",
-            ]
-        );
+        let mut expected = vec![
+            "exec",
+            "--json",
+            "--color",
+            "never",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "workspace-write",
+            "--model",
+            "gpt-5.1-codex",
+        ];
+        if cfg!(windows) {
+            expected.extend(["-c", "windows.sandbox=\"unelevated\""]);
+        }
+        expected.push("Implement it");
+        assert_eq!(build_args(&spec, None), expected);
     }
 
     #[test]
@@ -1153,6 +1193,19 @@ mod tests {
             approver: None,
         };
 
+        let mut expected = vec![
+            "exec",
+            "--json",
+            "--color",
+            "never",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
+        ];
+        if cfg!(windows) {
+            expected.extend(["-c", "windows.sandbox=\"unelevated\""]);
+        }
+        expected.extend(["resume", "thread-123", "Continue"]);
         assert_eq!(
             build_args(
                 &spec,
@@ -1160,18 +1213,7 @@ mod tests {
                     agent_session_id: "thread-123".into(),
                 })
             ),
-            vec![
-                "exec",
-                "--json",
-                "--color",
-                "never",
-                "--skip-git-repo-check",
-                "--sandbox",
-                "read-only",
-                "resume",
-                "thread-123",
-                "Continue",
-            ]
+            expected
         );
     }
 
