@@ -1,3 +1,4 @@
+import { ExtensionButton } from './ExtensionButton';
 import { useRef } from 'react';
 import { motion, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react';
 import { REPO } from '../lib/site';
@@ -69,6 +70,7 @@ export function Download() {
       </Reveal>
 
       <DownloadActions />
+      <div className="mt-6 flex justify-center"><ExtensionButton /></div>
     </section>
   );
 }

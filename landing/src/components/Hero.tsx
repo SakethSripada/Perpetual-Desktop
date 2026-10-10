@@ -1,3 +1,4 @@
+import { ExtensionButton } from './ExtensionButton';
 import { useRef } from 'react';
 import { motion, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react';
 import { REPO } from '../lib/site';
@@ -64,6 +65,7 @@ export function Hero() {
           className="mt-9 flex flex-wrap items-center justify-center gap-3"
         >
           <DownloadButton />
+          <ExtensionButton />
           <a
             href={REPO}
             className="inline-flex h-12 items-center gap-2 rounded-full px-5 text-[15px] font-medium text-white/85 ring-1 ring-white/25 transition-colors hover:bg-white/[0.08] hover:text-white"
