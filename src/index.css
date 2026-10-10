@@ -252,7 +252,8 @@
   position: absolute;
   display: inline-block;
   width: 2px;
-  height: 1.05em;
+  height: 14px;
+  max-height: 14px;
   margin-left: 2px;
   border-radius: 1px;
   background: var(--ink);
@@ -267,4 +268,10 @@
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+textarea {
+  font-size: 14px;
+  line-height: 20px;
+  caret-color: var(--ink);
 }
