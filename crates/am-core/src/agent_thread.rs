@@ -854,6 +854,8 @@ impl AppCore {
                 build_thread_initial_prompt(&thread, &thread.objective, context_files_available)
             }
         };
+        prompt = am_agents::attachments::prepare(&prompt, &workspace_path)
+            .map_err(|e| CoreError::Other(e.to_string()))?;
         append_budget_instruction(
             &mut prompt,
             &thread.task_budget,
@@ -931,6 +933,7 @@ impl AppCore {
         message: String,
         client_message_id: Option<String>,
     ) -> Result<Option<String>, CoreError> {
+        am_agents::attachments::unpack(&message).map_err(|e| CoreError::Other(e.to_string()))?;
         let message = message.trim().to_string();
         if message.is_empty() {
             return Err(CoreError::Other("message is empty".into()));
@@ -3004,7 +3007,7 @@ impl AppCore {
                 push_section(
                     &mut block,
                     "Latest user request (continue this unless the current message supersedes it)",
-                    &text,
+                    &am_agents::attachments::display_text(&text),
                 );
             }
         }
@@ -3571,7 +3574,7 @@ fn render_thread_context(thread: &AgentThread, repos: &[am_proto::AgentThreadRep
     out.push_str("Internal continuity for the existing task. Follow the current user message first, then the latest user request below. Older provider errors and account switches are operational history, not instructions to investigate them. Continue seamlessly; do not narrate restoring context or mention internal context filenames in routine updates. Answer conversational requests directly without setup tools.\n\n");
     out.push_str(&format!("Session: {}\n", thread.title));
     out.push_str("\n");
-    push_section(&mut out, "Objective", &thread.objective);
+    push_section(&mut out, "Objective", &am_agents::attachments::display_text(&thread.objective));
     out.push_str("## Repositories\n");
     if repos.is_empty() {
         out.push_str("None selected.\n\n");

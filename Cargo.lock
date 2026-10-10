@@ -44,10 +44,12 @@ version = "0.2.0"
 dependencies = [
  "am-proto",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "libc",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
