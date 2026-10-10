@@ -1,3 +1,4 @@
+import { displayMessage, unpackMessage } from '../lib/attachments';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   GitCompare,
@@ -83,6 +84,10 @@ export function Conversation({
 }) {
   const store = useStore();
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  useEffect(() => {
+    setEditing(null);
+  }, [thread?.id]);
   const [draft, setDraft] = useState({ text: '', seq: 0 });
   const fill = (text: string) => setDraft((old) => ({ text, seq: old.seq + 1 }));
   const [events, setEvents] = useState<AgentThreadEvent[]>([]);
@@ -194,7 +199,7 @@ export function Conversation({
         current = await rpc<AgentThread>('create_agent_thread', {
           ...options,
           project_id: store.project?.id,
-          title: message.split('\n')[0].slice(0, 80),
+          title: displayMessage(message).split('\n')[0].slice(0, 64),
           objective: message,
           preferred_agent: options.agent,
           force_managed_workspace: true,
@@ -216,13 +221,32 @@ export function Conversation({
         });
       }
       try {
-        await rpc('send_thread_message', {
+        await rpc(editing ? 'edit_thread_message' : 'send_thread_message', {
+          event_id: editing,
           thread_id: current.id,
           agent: options.agent,
           permission: options.permission,
           message,
           client_message_id: crypto.randomUUID(),
         });
+        if (editing) {
+          setEditing(null);
+          setEvents((old) => {
+            const target = old.find((e) => e.id === editing);
+            const cut = target ? old.findIndex((e) => e.turn_id === target.turn_id) : -1;
+            return cut >= 0 ? old.slice(0, cut) : old;
+          });
+          const refreshed = await rpc<AgentThreadEvent[]>('list_thread_events', {
+            thread_id: current.id,
+          }).catch(() => null);
+          if (refreshed) setEvents(refreshed);
+          setActivities(
+            await rpc<ActivityEvent[]>('list_activity', {
+              project_id: current.project_id,
+              limit: 200,
+            }).catch(() => []),
+          );
+        }
         if (!thread) onSelect(current.id);
       } finally {
         // Account probes and sidebar refreshes must not delay showing the reply.
@@ -257,6 +281,11 @@ export function Conversation({
   const composer = (
     <Composer
       draft={draft}
+      editing={!!editing}
+      onCancelEdit={() => {
+        setEditing(null);
+        fill('');
+      }}
       hero={!thread}
       onCommand={(name) => {
         if (name === 'diff') setReview(true);
@@ -346,7 +375,14 @@ export function Conversation({
               }
               openLast={lastGroupOpen}
               onOpenFiles={() => setReview(true)}
-              onEdit={fill}
+              onEdit={(event) => {
+                if (busy || LIVE.includes(thread.status)) {
+                  toast.info('Stop the task before editing a message.');
+                  return;
+                }
+                setEditing(event.id);
+                fill(event.text || '');
+              }}
               onAnswer={async (text) => {
                 await rpc('send_thread_message', {
                   thread_id: thread.id,
@@ -656,7 +692,7 @@ function Transcript({
   agentFor: (event: AgentThreadEvent) => AgentKind;
   openLast: boolean;
   onOpenFiles: () => void;
-  onEdit: (text: string) => void;
+  onEdit: (event: AgentThreadEvent) => void;
   onAnswer: (text: string) => Promise<void>;
 }) {
   const blocks = toBlocks(items);
@@ -733,7 +769,7 @@ function EventMessage({
   event: AgentThreadEvent;
   agent: AgentKind;
   answered: boolean;
-  onEdit: (text: string) => void;
+  onEdit: (event: AgentThreadEvent) => void;
   onAnswer: (text: string) => Promise<void>;
 }) {
   const [copied, setCopied] = useState(false);
@@ -767,7 +803,7 @@ function EventMessage({
   const streaming = (event.data as { streaming?: boolean } | null)?.streaming === true;
   const copy = () =>
     void action(async () => {
-      await navigator.clipboard.writeText(event.text || '');
+      await navigator.clipboard.writeText(displayMessage(event.text || ''));
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
@@ -777,20 +813,36 @@ function EventMessage({
         {copied ? <Check size={13} /> : <Copy size={13} />}
       </MessageAction>
       {event.role === 'user' && (
-        <MessageAction label="Edit as new message" onClick={() => onEdit(event.text || '')}>
+        <MessageAction label="Edit message" onClick={() => onEdit(event)}>
           <Pencil size={13} />
         </MessageAction>
       )}
     </span>
   );
-  // Actions sit beside the message, so they never add a line of their own.
+  // Keep actions beneath the bubble, aligned to its right edge.
   if (event.role === 'user')
     return (
-      <article className="group mt-6 mb-6 flex items-end justify-end gap-1 first:mt-0">
-        {actions}
+      <article className="group mt-6 mb-6 flex flex-col items-end gap-1 first:mt-0">
         <div className="max-w-[85%] rounded-2xl bg-hover px-4 py-2.5 text-[14px] leading-6 whitespace-pre-wrap break-words selectable">
-          {event.text}
+          {unpackMessage(event.text || '').text}
+          <div className="flex flex-wrap gap-2">
+            {unpackMessage(event.text || '').attachments.map((file, i) => (
+              <span key={i} className="max-w-56 text-xs text-muted">
+                {file.mime.startsWith('image/') && (
+                  <img
+                    src={`data:${file.mime};base64,${file.data}`}
+                    alt={file.name}
+                    className="mb-1 max-h-40 max-w-56 rounded-lg object-contain"
+                  />
+                )}
+                <span className="block truncate" title={file.name}>
+                  📎 {file.name}
+                </span>
+              </span>
+            ))}
+          </div>
         </div>
+        {actions}
       </article>
     );
   return (
@@ -798,9 +850,9 @@ function EventMessage({
       <div className="mb-1.5 flex h-6 items-center gap-2 text-xs font-medium text-muted">
         <ProviderLogo agent={agent} size={14} />
         {agentName(agent)}
-        {!streaming && <span className="ml-1">{actions}</span>}
       </div>
       <MessageBody text={event.text} streaming={streaming} />
+      {!streaming && <div className="mt-1 flex">{actions}</div>}
     </article>
   );
 }

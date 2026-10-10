@@ -1,3 +1,4 @@
+import { displayMessage, unpackMessage, packMessage } from '../lib/attachments';
 import { useState, type ReactNode } from 'react';
 import { ArrowUp, ArrowDown, Pencil, X } from 'lucide-react';
 import type { QueuedTurn } from '../lib/types';
@@ -19,7 +20,10 @@ export function Queue({ turns, refresh }: { turns: QueuedTurn[]; refresh: () => 
     });
   const save = () =>
     void action(async () => {
-      await rpc('update_queued_turn', { id: edit?.id, message: message.trim() });
+      await rpc('update_queued_turn', {
+        id: edit?.id,
+        message: packMessage(message.trim(), unpackMessage(edit?.message || '').attachments),
+      });
       await refresh();
       setEdit(null);
     });
@@ -34,7 +38,9 @@ export function Queue({ turns, refresh }: { turns: QueuedTurn[]; refresh: () => 
           const index = turns.indexOf(turn);
           return (
             <div key={turn.id} className="group flex h-7 items-center gap-1 text-[13px]">
-              <span className="min-w-0 flex-1 truncate text-muted">{turn.message}</span>
+              <span className="min-w-0 flex-1 truncate text-muted">
+                {displayMessage(turn.message)}
+              </span>
               <div className="flex opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
                 <QueueAction label="Move up" disabled={!index} onClick={() => void move(index, -1)}>
                   <ArrowUp size={13} />
@@ -50,7 +56,7 @@ export function Queue({ turns, refresh }: { turns: QueuedTurn[]; refresh: () => 
                   label="Edit"
                   onClick={() => {
                     setEdit(turn);
-                    setMessage(turn.message);
+                    setMessage(unpackMessage(turn.message).text);
                   }}
                 >
                   <Pencil size={13} />
@@ -80,7 +86,11 @@ export function Queue({ turns, refresh }: { turns: QueuedTurn[]; refresh: () => 
             <Button variant="secondary" onClick={() => setEdit(null)}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={!message.trim()} onClick={save}>
+            <Button
+              variant="primary"
+              disabled={!message.trim() && !unpackMessage(edit?.message || '').attachments.length}
+              onClick={save}
+            >
               Save
             </Button>
           </>

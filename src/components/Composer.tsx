@@ -1,7 +1,17 @@
+import {
+  packMessage,
+  unpackMessage,
+  readAttachments,
+  attachmentBytes,
+  MAX_BYTES,
+  type Attachment,
+} from '../lib/attachments';
 import { toast } from 'sonner';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ArrowUp,
+  Paperclip,
+  X,
   ChevronDown,
   FolderGit2,
   FolderOpen,
@@ -85,6 +95,8 @@ export function Composer({
   onNavigate,
   hero,
   budgetStarted = false,
+  editing = false,
+  onCancelEdit,
 }: {
   thread?: AgentThread;
   draft: { text: string; seq: number };
@@ -96,10 +108,33 @@ export function Composer({
   /** The larger, centered composer used to start a task. */
   hero?: boolean;
   budgetStarted?: boolean;
+  editing?: boolean;
+  onCancelEdit?: () => void;
 }) {
   const store = useStore();
   const folder = useAddFolder();
   const [text, setText] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [reading, setReading] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const addFiles = async (files: File[]) => {
+    if (!files.length || reading || busy) return;
+    setReading(true);
+    try {
+      const added = await readAttachments(files);
+      setAttachments((old) => {
+        if (old.length + added.length > 10 || attachmentBytes([...old, ...added]) > MAX_BYTES) {
+          toast.error('Attach up to 10 files totaling 20 MB.');
+          return old;
+        }
+        return [...old, ...added];
+      });
+    } catch (error) {
+      toast.error(String(error));
+    } finally {
+      setReading(false);
+    }
+  };
   const [agent, setAgent] = useState<AgentKind>(() => initialAgent(thread));
   const [permission, setPermission] = useState<PermissionPolicy>(
     thread?.permission || 'workspace_write',
@@ -117,6 +152,7 @@ export function Composer({
   const [suggestion, setSuggestion] = useState(0);
   const input = useRef<HTMLTextAreaElement>(null);
   const sending = useRef(false);
+  const beforeEdit = useRef<{ text: string; attachments: Attachment[] } | null>(null);
 
   const catalog = store.models.find((m) => m.agent === agent);
   const selected = store.modelPreferences.selected[agent];
@@ -160,11 +196,20 @@ export function Composer({
     input.current?.focus();
   }, []);
   useEffect(() => {
+    if (editing && !beforeEdit.current) beforeEdit.current = { text, attachments };
+    if (!editing && beforeEdit.current) {
+      setText(beforeEdit.current.text);
+      setAttachments(beforeEdit.current.attachments);
+      beforeEdit.current = null;
+      return;
+    }
     if (draft.seq) {
-      setText(draft.text);
+      const restored = unpackMessage(draft.text);
+      setText(restored.text);
+      setAttachments(restored.attachments);
       input.current?.focus();
     }
-  }, [draft]);
+  }, [draft, editing]);
   useEffect(() => {
     if (thread?.active_agent) {
       setAgent(thread.active_agent);
@@ -221,7 +266,7 @@ export function Composer({
   };
 
   const send = async () => {
-    if (!text.trim() || busy || sending.current) return;
+    if ((!text.trim() && !attachments.length) || reading || busy || sending.current) return;
     const submittedText = text;
     let message = text.trim();
     let runPermission = permission;
@@ -307,7 +352,7 @@ export function Composer({
     sending.current = true;
     try {
       if (
-        await onSend(message, {
+        await onSend(packMessage(message, attachments), {
           agent,
           permission: runPermission,
           execution_backend: 'host',
@@ -318,8 +363,10 @@ export function Composer({
           local_provider: chosenModel?.local_provider,
           local_base_url: chosenModel?.local_base_url,
         })
-      )
+      ) {
         setText((current) => (current === submittedText ? '' : current));
+        setAttachments([]);
+      }
     } finally {
       sending.current = false;
     }
@@ -379,7 +426,79 @@ export function Composer({
             : 'shadow-[0_8px_30px_-22px_rgba(0,0,0,0.5)]',
         )}
       >
+        {editing && (
+          <div className="flex items-center justify-between px-4 pt-3 text-xs text-muted">
+            Editing message · later replies will be replaced
+            <button type="button" disabled={busy || reading} onClick={onCancelEdit}>
+              Cancel
+            </button>
+          </div>
+        )}
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            void addFiles(Array.from(e.target.files || []));
+            e.target.value = '';
+          }}
+        />
+        <div className="flex flex-wrap gap-2 px-4 pt-2">
+          <button
+            type="button"
+            aria-label="Attach files"
+            title="Attach images, PDFs, or files"
+            disabled={reading || busy}
+            onClick={() => picker.current?.click()}
+            className="text-muted"
+          >
+            <Paperclip size={16} />
+          </button>
+          {attachments.map((a) => (
+            <span
+              key={a.id}
+              className="flex max-w-48 items-center gap-2 rounded-lg bg-hover px-2 py-1 text-xs"
+            >
+              {a.mime.startsWith('image/') && (
+                <img
+                  src={`data:${a.mime};base64,${a.data}`}
+                  alt=""
+                  className="h-8 w-8 rounded object-cover"
+                />
+              )}
+              <span className="truncate" title={a.name}>
+                {a.name}
+              </span>
+              <button
+                type="button"
+                aria-label={`Remove ${a.name}`}
+                disabled={busy}
+                onClick={() => setAttachments((old) => old.filter((f) => f.id !== a.id))}
+              >
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+          {reading && <span className="text-xs text-muted">Reading files…</span>}
+        </div>
         <textarea
+          onPaste={(e) => {
+            const files = Array.from(e.clipboardData.files);
+            if (files.length) {
+              e.preventDefault();
+              void addFiles(files);
+            }
+          }}
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes('Files')) e.preventDefault();
+          }}
+          onDrop={(e) => {
+            if (e.dataTransfer.files.length) {
+              e.preventDefault();
+              void addFiles(Array.from(e.dataTransfer.files));
+            }
+          }}
           ref={input}
           aria-label="Message"
           value={text}
@@ -601,7 +720,7 @@ export function Composer({
             <button
               aria-label={running ? 'Queue follow-up' : 'Send'}
               onClick={() => void send()}
-              disabled={!text.trim() || busy}
+              disabled={(!text.trim() && !attachments.length) || reading || busy}
               className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-surface transition-opacity hover:opacity-85 disabled:opacity-25"
             >
               <ArrowUp size={17} strokeWidth={2.25} />

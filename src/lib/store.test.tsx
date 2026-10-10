@@ -284,3 +284,40 @@ describe('first task authentication failure', () => {
     expect(attempts).toBe(2);
   });
 });
+
+describe('editing composer drafts', () => {
+  it('restores an unsent draft when an edit with attachments is cancelled', async () => {
+    const file = { id: 'pdf', name: 'review.pdf', mime: 'application/pdf', data: 'JVBERi0xLjc=' };
+    const render = (text: string, seq: number, editing: boolean) =>
+      root.render(
+        <Tooltip.Provider>
+          <StoreProvider>
+            <Composer
+              draft={{ text, seq }}
+              editing={editing}
+              busy={false}
+              onSend={async () => false}
+              onStop={() => {}}
+              onCommand={() => {}}
+              onNavigate={() => {}}
+            />
+          </StoreProvider>
+        </Tooltip.Provider>,
+      );
+    await act(async () => render('My unsent draft', 1, false));
+    await act(async () =>
+      render(
+        `Edited request\n\n<perpetual-attachments>${JSON.stringify([file])}</perpetual-attachments>`,
+        2,
+        true,
+      ),
+    );
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')!.value.trim()).toBe(
+      'Edited request',
+    );
+    expect(container.textContent).toContain('review.pdf');
+    await act(async () => render('', 3, false));
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('My unsent draft');
+    expect(container.textContent).not.toContain('review.pdf');
+  });
+});

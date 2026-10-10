@@ -149,7 +149,11 @@ export function TaskList({
                   }}
                 />
               ) : (
-                <span className="min-w-0 flex-1 truncate">{t.title || 'Untitled task'}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {t.title.length > 64
+                    ? t.title.slice(0, 63).trimEnd() + '…'
+                    : t.title || 'Untitled task'}
+                </span>
               )}
               {status.tone === 'accent' && status.live ? (
                 <LoaderGrid size={3} />
