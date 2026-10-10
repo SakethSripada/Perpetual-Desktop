@@ -46,34 +46,50 @@ export const Video = forwardRef<
     const load = new IntersectionObserver(([e]) => e.isIntersecting && setNear(true), {
       rootMargin: '600px 0px',
     });
+    load.observe(el);
+    return () => load.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const el = video.current;
+    if (!el || !near) return;
+    let visible = false;
+    const syncPlayback = () => {
+      if (!autoPlay) return;
+      if (visible) void el.play().catch(() => undefined);
+      else el.pause();
+    };
     const play = new IntersectionObserver(
       ([e]) => {
-        if (!autoPlay) return;
-        if (e.isIntersecting) void el.play().catch(() => undefined);
-        else el.pause();
+        visible = e.isIntersecting && e.intersectionRatio >= 0.1;
+        syncPlayback();
       },
-      { threshold: 0.35 },
+      { threshold: 0.1 },
     );
     // Native looping always restarts at zero, so loop by hand past `start`.
     const skip = () => {
       if (start && el.currentTime < start) el.currentTime = start;
     };
     const restart = () => {
-      if (!start || !loop) return;
+      if (!start || !loop || !autoPlay || !visible) return;
       el.currentTime = start;
       void el.play().catch(() => undefined);
     };
     el.addEventListener('loadedmetadata', skip);
     el.addEventListener('ended', restart);
-    load.observe(el);
+    el.addEventListener('canplay', syncPlayback);
+    // Sources are inserted lazily. Restart resource selection after React
+    // commits them; an earlier play() can have run with no source.
+    el.load();
     play.observe(el);
     return () => {
-      load.disconnect();
       play.disconnect();
+      el.pause();
+      el.removeEventListener('canplay', syncPlayback);
       el.removeEventListener('loadedmetadata', skip);
       el.removeEventListener('ended', restart);
     };
-  }, [autoPlay, loop, start]);
+  }, [near, name, variant, autoPlay, loop, start]);
 
   return (
     <video
@@ -86,8 +102,8 @@ export const Video = forwardRef<
       loop={loop && !start}
       preload={near ? 'auto' : 'none'}
     >
-      {near && variant === '' && <source src={`${import.meta.env.BASE_URL}media/${name}.webm`} type="video/webm" />}
       {near && <source src={`${import.meta.env.BASE_URL}media/${name}${variant}.mp4`} type="video/mp4" />}
+      {near && variant === '' && <source src={`${import.meta.env.BASE_URL}media/${name}.webm`} type="video/webm" />}
     </video>
   );
 });

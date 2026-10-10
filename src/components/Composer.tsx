@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ArrowUp,
-  Paperclip,
+  Plus,
   X,
   ChevronDown,
   FolderGit2,
@@ -444,44 +444,36 @@ export function Composer({
             e.target.value = '';
           }}
         />
-        <div className="flex flex-wrap gap-2 px-4 pt-2">
-          <button
-            type="button"
-            aria-label="Attach files"
-            title="Attach images, PDFs, or files"
-            disabled={reading || busy}
-            onClick={() => picker.current?.click()}
-            className="text-muted"
-          >
-            <Paperclip size={16} />
-          </button>
-          {attachments.map((a) => (
-            <span
-              key={a.id}
-              className="flex max-w-48 items-center gap-2 rounded-lg bg-hover px-2 py-1 text-xs"
-            >
-              {a.mime.startsWith('image/') && (
-                <img
-                  src={`data:${a.mime};base64,${a.data}`}
-                  alt=""
-                  className="h-8 w-8 rounded object-cover"
-                />
-              )}
-              <span className="truncate" title={a.name}>
-                {a.name}
-              </span>
-              <button
-                type="button"
-                aria-label={`Remove ${a.name}`}
-                disabled={busy}
-                onClick={() => setAttachments((old) => old.filter((f) => f.id !== a.id))}
+        {(attachments.length > 0 || reading) && (
+          <div className="flex flex-wrap gap-2 px-4 pt-2">
+            {attachments.map((a) => (
+              <span
+                key={a.id}
+                className="flex max-w-48 items-center gap-2 rounded-lg bg-hover px-2 py-1 text-xs"
               >
-                <X size={12} />
-              </button>
-            </span>
-          ))}
-          {reading && <span className="text-xs text-muted">Reading files…</span>}
-        </div>
+                {a.mime.startsWith('image/') && (
+                  <img
+                    src={`data:${a.mime};base64,${a.data}`}
+                    alt=""
+                    className="h-8 w-8 rounded object-cover"
+                  />
+                )}
+                <span className="truncate" title={a.name}>
+                  {a.name}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${a.name}`}
+                  disabled={busy}
+                  onClick={() => setAttachments((old) => old.filter((f) => f.id !== a.id))}
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+            {reading && <span className="text-xs text-muted">Reading files…</span>}
+          </div>
+        )}
         <textarea
           onPaste={(e) => {
             const files = Array.from(e.clipboardData.files);
@@ -547,6 +539,16 @@ export function Composer({
           )}
         />
         <div className="flex items-center gap-0.5 px-2 pb-2">
+          <button
+            type="button"
+            aria-label="Attach files"
+            title="Attach images, PDFs, or files"
+            disabled={reading || busy}
+            onClick={() => picker.current?.click()}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-hover hover:text-ink disabled:opacity-40"
+          >
+            <Plus size={18} />
+          </button>
           <MenuRoot>
             <MenuTrigger asChild>
               <button className="flex h-8 max-w-72 items-center gap-2 rounded-lg px-2 text-xs text-ink/90 hover:bg-hover data-[state=open]:bg-hover">
